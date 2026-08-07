@@ -1,42 +1,379 @@
-name: Planning Agent
+// Planning Agent — runs for every Linear issue currently in STATE_NAME.
+//
+// Phase 1: ensure a branch exists off BASE_BRANCH for the issue.
+// Phase 2: check out THAT branch, run Claude against it, and append the
+//          analysis to the issue DESCRIPTION (the original text is kept).
+//
+// Idempotent: an existing branch is not recreated, and an issue whose
+// description already carries the analysis marker is not re-analysed. Self-healing: if phase 2
+// failed on an earlier run, the next run retries it without redoing phase 1.
+//
+// Read-only with respect to code: Claude gets Read/Grep/Glob only.
+// Never commits, never opens a PR, never changes issue status.
 
-on:
-  schedule:
-    - cron: '7,22,37,52 * * * *'
-  workflow_dispatch:
+import { execFileSync } from 'node:child_process';
 
-permissions:
-  contents: write
+const {
+  LINEAR_API_KEY,
+  GH_TOKEN,
+  REPO,
+  RUN_URL,
+  TEAM_KEY,
+  STATE_NAME,
+  BASE_BRANCH,
+  CLAUDE_MODEL = 'claude-sonnet-5',
+  MAX_TURNS = '20',
+} = process.env;
 
-concurrency:
-  group: planning-agent
-  cancel-in-progress: false
+for (const [k, v] of Object.entries({
+  LINEAR_API_KEY, GH_TOKEN, REPO, TEAM_KEY, STATE_NAME, BASE_BRANCH,
+})) {
+  if (!v) {
+    console.error(`Missing required environment variable: ${k}`);
+    process.exit(1);
+  }
+}
 
-jobs:
-  plan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
+const BRANCH_MARKER = '<!-- planning-agent:branch -->';
+const ANALYSIS_MARKER = '<!-- planning-agent:analysis -->';
+const LINEAR_URL = 'https://api.linear.app/graphql';
+const GH_API = 'https://api.github.com';
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+// --------------------------------------------------------------- API helpers
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+async function linear(query, variables = {}) {
+  const res = await fetch(LINEAR_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
+    body: JSON.stringify({ query, variables }),
+  });
 
-      - name: Create branches and analyse issues
-        run: node .github/scripts/planning-agent.mjs
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # --- change these when moving to production ---
-          TEAM_KEY: SBX
-          STATE_NAME: Todo
-          BASE_BRANCH: development
-          CLAUDE_MODEL: claude-sonnet-5
-          MAX_TURNS: '20'
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      `Linear rejected the API key (HTTP ${res.status}). Check LINEAR_API_KEY and its access to team ${TEAM_KEY}.`
+    );
+  }
+
+  const json = await res.json();
+  if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
+  return json.data;
+}
+
+async function github(path, options = {}) {
+  return fetch(`${GH_API}${path}`, {
+    ...options,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${GH_TOKEN}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+  });
+}
+
+const ISSUES_QUERY = `
+  query($teamKey: String!, $stateName: String!, $after: String) {
+    issues(
+      filter: {
+        team:  { key:  { eq: $teamKey } }
+        state: { name: { eq: $stateName } }
+      }
+      first: 100
+      after: $after
+    ) {
+      nodes {
+        id
+        identifier
+        title
+        description
+        branchName
+        priority
+        labels(first: 20) { nodes { name } }
+        project { name }
+        parent { identifier title }
+        comments(first: 100) { nodes { body } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+const COMMENT_MUTATION = `
+  mutation($issueId: String!, $body: String!) {
+    commentCreate(input: { issueId: $issueId, body: $body }) { success }
+  }
+`;
+
+// Only ever sets `description`. Status, assignee, labels etc. are never passed,
+// so this cannot advance the issue's state.
+const UPDATE_DESCRIPTION_MUTATION = `
+  mutation($id: String!, $description: String!) {
+    issueUpdate(id: $id, input: { description: $description }) { success }
+  }
+`;
+
+const comment = (issueId, body) => linear(COMMENT_MUTATION, { issueId, body });
+
+const setDescription = (id, description) =>
+  linear(UPDATE_DESCRIPTION_MUTATION, { id, description });
+
+// ------------------------------------------------------------------ git / AI
+
+function git(args) {
+  return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// Check out the issue's own branch so Claude analyses that tree, not the
+// branch the workflow happens to be running from.
+function checkoutIssueBranch(branch) {
+  git(['fetch', '--depth=1', 'origin', branch]);
+  git(['checkout', '-B', branch, 'FETCH_HEAD']);
+  return git(['rev-parse', 'HEAD']).trim();
+}
+
+const TYPE_LABELS = ['Bug', 'Feature', 'Improvement', 'Setup'];
+
+function buildPrompt(issue, branch) {
+  const labels = (issue.labels?.nodes ?? []).map((l) => l.name);
+  const typeLabel = labels.find((l) => TYPE_LABELS.includes(l)) ?? 'unlabelled';
+  const areaLabels = labels.filter((l) => !TYPE_LABELS.includes(l));
+
+  const meta = [
+    `Type: ${typeLabel}`,
+    areaLabels.length ? `Areas: ${areaLabels.join(', ')}` : null,
+    issue.project?.name ? `Project: ${issue.project.name}` : null,
+    issue.parent ? `Parent: ${issue.parent.identifier} — ${issue.parent.title}` : null,
+  ].filter(Boolean).join(' | ');
+
+  const bugSpecific = typeLabel === 'Bug'
+    ? [
+        'This is a **Bug**. Your plan MUST start with a failing regression test that reproduces',
+        'the exact scenario in "## Problem" (use the production example if one is given), and only',
+        'then the fix. Identify the root cause with `file:line` anchors.',
+      ]
+    : [
+        'This is not a bug. Plan unit tests for calculation/business logic and component tests',
+        '(Testing Library) for new UI states. Only extend an e2e spec in `e2e/` if this touches a',
+        'core flow (auth, shifts, time tracking, payroll).',
+      ];
+
+  return [
+    'You are the Planning Agent for the peeepl-dev team. You prepare a tracked issue so that a',
+    'separate AI coding agent can implement it without re-deriving anything.',
+    '',
+    `The working tree is checked out at branch "${branch}", cut from "${BASE_BRANCH}".`,
+    'You have READ-ONLY access. Do not modify, create or delete any file. Do not write code',
+    'beyond short illustrative snippets inside your plan.',
+    '',
+    '---',
+    '',
+    `# Issue ${issue.identifier}: ${issue.title}`,
+    meta ? `_${meta}_` : null,
+    '',
+    issue.description || '(no description provided)',
+    '',
+    '---',
+    '',
+    '## How this team writes issues',
+    '',
+    'Issues follow a fixed skeleton with H2 headings: `## Goal` (or `## Problem` for bugs),',
+    '`## Context`, `## Scope` (In scope / Out of scope), `## Locked decisions`, `## Assumptions`,',
+    '`## Technical notes / Code anchors`, `## Acceptance criteria` (checkboxes), `## Testing`,',
+    '`## Dependencies`. Sections may be missing when not applicable.',
+    '',
+    'Rules you must obey:',
+    '- `## Out of scope` is binding. Never plan work it excludes.',
+    '- `## Locked decisions` are settled. Do not reopen or propose alternatives to them.',
+    '- Every checkbox under `## Acceptance criteria` must be covered by at least one plan step.',
+    '  If a criterion cannot be met, say so explicitly rather than silently dropping it.',
+    '- Code references use `path/to/file.ts:123` anchors. Use that format.',
+    '- Verification commands for this repo: `npm run lint`, `npm run test:ci` (Vitest + coverage),',
+    '  `npx playwright test` (e2e). Test fixtures live in `e2e/fixtures` — never point tests at',
+    '  production data.',
+    '- For DB/RPC work, plan RLS tests both ways: the permitted role sees data, and a user without',
+    '  the permission gets an error or empty result. Never plan only the happy path.',
+    '- If the issue states an invariant, encode it as its own named test.',
+    ...bugSpecific,
+    '',
+    '---',
+    '',
+    '## Your output',
+    '',
+    'Your output is appended to the issue description as the "Plan refinement" appendix. The',
+    'human-written sections above stay untouched, so do NOT restate the Goal, Scope or Acceptance',
+    'criteria — reference them instead.',
+    '',
+    'Emit exactly these four H3 sections, in this order, and nothing else:',
+    '',
+    '### Technical notes / Code anchors',
+    'The files, modules, tables, RPCs and migrations this issue touches, each with a `file:line`',
+    'anchor. For each: what it currently does, and the conventions/patterns it follows that the',
+    'implementer must match. Base this on what you actually read in the repo — if you could not',
+    'find something the issue implies exists, say so plainly.',
+    '',
+    '### Integration plan',
+    'An ordered, numbered list of implementation steps. Each step names the file(s) to touch and',
+    'the concrete change to make there. Specific enough that a coding agent with no prior context',
+    'can execute it. Include the test steps in sequence, not as an afterthought. End the section',
+    'with a line mapping each acceptance-criteria checkbox to the step number(s) that satisfy it.',
+    '',
+    '### Assumptions',
+    'Defaults you applied where the issue was silent, so a human can correct them. Write "None."',
+    'if there are none.',
+    '',
+    '### Open questions & risks',
+    'Anything genuinely ambiguous, any regression risk, any dependency on work not yet done.',
+    'Write "None." if there are none. Do not invent filler.',
+    '',
+    'Output only those four sections as markdown. No preamble, no closing remarks, no H1 or H2',
+    'headings.',
+  ].filter((l) => l !== null).join('\n');
+}
+
+function runClaude(prompt) {
+  const raw = execFileSync(
+    'claude',
+    [
+      '-p', prompt,
+      '--model', CLAUDE_MODEL,
+      '--max-turns', MAX_TURNS,
+      '--allowedTools', 'Read,Grep,Glob',
+      '--permission-mode', 'bypassPermissions',
+      '--output-format', 'json',
+    ],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+  );
+
+  const parsed = JSON.parse(raw);
+  if (parsed.is_error) throw new Error(`Claude returned an error: ${parsed.result ?? '(no detail)'}`);
+  if (!parsed.result || !parsed.result.trim()) throw new Error('Claude returned an empty result.');
+  return parsed;
+}
+
+// ---------------------------------------------------------------------- main
+
+async function fetchTodoIssues() {
+  const issues = [];
+  let after = null;
+  do {
+    const page = await linear(ISSUES_QUERY, { teamKey: TEAM_KEY, stateName: STATE_NAME, after });
+    issues.push(...page.issues.nodes);
+    after = page.issues.pageInfo.hasNextPage ? page.issues.pageInfo.endCursor : null;
+  } while (after);
+  return issues;
+}
+
+async function ensureBranch(issue, baseSha) {
+  const branch = issue.branchName;
+
+  const existing = await github(`/repos/${REPO}/git/ref/heads/${branch}`);
+  if (existing.ok) {
+    console.log(`  branch "${branch}" already exists.`);
+    return true;
+  }
+  if (existing.status !== 404) {
+    throw new Error(`Unexpected HTTP ${existing.status} while checking branch "${branch}".`);
+  }
+
+  const created = await github(`/repos/${REPO}/git/refs`, {
+    method: 'POST',
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
+  });
+
+  if (created.status === 422) {
+    console.log(`  branch "${branch}" was created concurrently.`);
+    return true;
+  }
+  if (!created.ok) {
+    throw new Error(`Failed to create branch "${branch}" (HTTP ${created.status}): ${await created.text()}`);
+  }
+
+  console.log(`  created branch "${branch}".`);
+  await comment(
+    issue.id,
+    [
+      BRANCH_MARKER,
+      '**Planning Agent** _(automated)_',
+      '',
+      `Branch \`${branch}\` created from \`${BASE_BRANCH}\`.`,
+      '',
+      RUN_URL ? `_[Workflow run](${RUN_URL})_` : '_Generated in CI._',
+    ].join('\n')
+  );
+  return true;
+}
+
+async function analyseIssue(issue) {
+  const branch = issue.branchName;
+
+  const sha = checkoutIssueBranch(branch);
+  console.log(`  checked out "${branch}" at ${sha.substring(0, 7)}; invoking Claude...`);
+
+  const parsed = runClaude(buildPrompt(issue, branch));
+  const cost = parsed.total_cost_usd != null ? ` | cost: $${parsed.total_cost_usd}` : '';
+  console.log(`  turns: ${parsed.num_turns ?? '?'}${cost}`);
+
+  const original = (issue.description || '').trimEnd();
+
+  const section = [
+    ANALYSIS_MARKER,
+    '## 🔍 Plan refinement _(Planning Agent, automated)_',
+    '',
+    `Branch \`${branch}\` at commit \`${sha.substring(0, 7)}\`.`,
+    RUN_URL ? `[Workflow run](${RUN_URL})` : 'Generated in CI.',
+    '',
+    parsed.result.trim(),
+  ].join('\n');
+
+  // The human-written description is preserved verbatim above the separator.
+  const description = original ? `${original}\n\n---\n\n${section}` : section;
+
+  await setDescription(issue.id, description);
+}
+
+async function main() {
+  const issues = await fetchTodoIssues();
+  console.log(`Found ${issues.length} issue(s) in "${STATE_NAME}" for team ${TEAM_KEY}.\n`);
+  if (issues.length === 0) return;
+
+  const baseRes = await github(`/repos/${REPO}/git/ref/heads/${BASE_BRANCH}`);
+  if (!baseRes.ok) {
+    throw new Error(
+      `Base branch "${BASE_BRANCH}" not found in ${REPO} (HTTP ${baseRes.status}). Create it before running this workflow.`
+    );
+  }
+  const baseSha = (await baseRes.json()).object.sha;
+
+  const failures = [];
+
+  for (const issue of issues) {
+    console.log(`${issue.identifier} — ${issue.title}`);
+    try {
+      // Phase 1 — branch must exist before anything is analysed.
+      await ensureBranch(issue, baseSha);
+
+      // Phase 2 — analyse, unless this issue already has an analysis.
+      const analysed = (issue.description || '').includes(ANALYSIS_MARKER);
+      if (analysed) {
+        console.log('  description already contains an analysis - skipping.\n');
+        continue;
+      }
+
+      await analyseIssue(issue);
+      console.log('  analysis written to description.\n');
+    } catch (err) {
+      const detail = err.stderr ? `${err.message}\n${String(err.stderr).trim()}` : err.message;
+      console.error(`  FAILED: ${detail}\n`);
+      failures.push(`${issue.identifier}: ${err.message}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} issue(s) failed:\n${failures.join('\n')}`);
+  }
+}
+
+main().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});
