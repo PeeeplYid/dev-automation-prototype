@@ -59,15 +59,17 @@ async function github(path, options = {}) {
 }
 
 const ISSUES_QUERY = `
-  query($teamKey: String!, $stateName: String!) {
+  query($teamKey: String!, $stateName: String!, $after: String) {
     issues(
       filter: {
         team:  { key:  { eq: $teamKey } }
         state: { name: { eq: $stateName } }
       }
-      first: 50
+      first: 100
+      after: $after
     ) {
       nodes { id identifier title branchName url }
+      pageInfo { hasNextPage endCursor }
     }
   }
 `;
@@ -79,8 +81,13 @@ const COMMENT_MUTATION = `
 `;
 
 async function main() {
-  const data = await linear(ISSUES_QUERY, { teamKey: TEAM_KEY, stateName: STATE_NAME });
-  const issues = data.issues.nodes;
+  const issues = [];
+  let after = null;
+  do {
+    const page = await linear(ISSUES_QUERY, { teamKey: TEAM_KEY, stateName: STATE_NAME, after });
+    issues.push(...page.issues.nodes);
+    after = page.issues.pageInfo.hasNextPage ? page.issues.pageInfo.endCursor : null;
+  } while (after);
 
   console.log(`Found ${issues.length} issue(s) in "${STATE_NAME}" for team ${TEAM_KEY}.`);
   if (issues.length === 0) return;
