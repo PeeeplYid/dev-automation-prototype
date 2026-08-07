@@ -1,11 +1,11 @@
 // Planning Agent — runs for every Linear issue currently in STATE_NAME.
 //
 // Phase 1: ensure a branch exists off BASE_BRANCH for the issue.
-// Phase 2: check out THAT branch and run Claude against it, then post the
-//          analysis to the issue.
+// Phase 2: check out THAT branch, run Claude against it, and append the
+//          analysis to the issue DESCRIPTION (the original text is kept).
 //
-// Idempotent: an existing branch is not recreated, and an issue that already
-// carries an analysis comment is not re-analysed. Self-healing: if phase 2
+// Idempotent: an existing branch is not recreated, and an issue whose
+// description already carries the analysis marker is not re-analysed. Self-healing: if phase 2
 // failed on an earlier run, the next run retries it without redoing phase 1.
 //
 // Read-only with respect to code: Claude gets Read/Grep/Glob only.
@@ -100,7 +100,18 @@ const COMMENT_MUTATION = `
   }
 `;
 
+// Only ever sets `description`. Status, assignee, labels etc. are never passed,
+// so this cannot advance the issue's state.
+const UPDATE_DESCRIPTION_MUTATION = `
+  mutation($id: String!, $description: String!) {
+    issueUpdate(id: $id, input: { description: $description }) { success }
+  }
+`;
+
 const comment = (issueId, body) => linear(COMMENT_MUTATION, { issueId, body });
+
+const setDescription = (id, description) =>
+  linear(UPDATE_DESCRIPTION_MUTATION, { id, description });
 
 // ------------------------------------------------------------------ git / AI
 
@@ -227,20 +238,22 @@ async function analyseIssue(issue) {
   const cost = parsed.total_cost_usd != null ? ` | cost: $${parsed.total_cost_usd}` : '';
   console.log(`  turns: ${parsed.num_turns ?? '?'}${cost}`);
 
-  await comment(
-    issue.id,
-    [
-      ANALYSIS_MARKER,
-      '**Planning Agent** _(automated analysis)_',
-      '',
-      `Analysed branch \`${branch}\` at commit \`${sha.substring(0, 7)}\`.`,
-      '',
-      parsed.result.trim(),
-      '',
-      '---',
-      RUN_URL ? `_[Workflow run](${RUN_URL})_` : '_Generated in CI._',
-    ].join('\n')
-  );
+  const original = (issue.description || '').trimEnd();
+
+  const section = [
+    ANALYSIS_MARKER,
+    '## Planning Agent analysis _(automated)_',
+    '',
+    `Branch \`${branch}\` at commit \`${sha.substring(0, 7)}\`.`,
+    RUN_URL ? `[Workflow run](${RUN_URL})` : 'Generated in CI.',
+    '',
+    parsed.result.trim(),
+  ].join('\n');
+
+  // The human-written description is preserved verbatim above the separator.
+  const description = original ? `${original}\n\n---\n\n${section}` : section;
+
+  await setDescription(issue.id, description);
 }
 
 async function main() {
@@ -265,14 +278,14 @@ async function main() {
       await ensureBranch(issue, baseSha);
 
       // Phase 2 — analyse, unless this issue already has an analysis.
-      const analysed = issue.comments.nodes.some((c) => c.body.includes(ANALYSIS_MARKER));
+      const analysed = (issue.description || '').includes(ANALYSIS_MARKER);
       if (analysed) {
-        console.log('  analysis already present - skipping.\n');
+        console.log('  description already contains an analysis - skipping.\n');
         continue;
       }
 
       await analyseIssue(issue);
-      console.log('  analysis posted.\n');
+      console.log('  analysis written to description.\n');
     } catch (err) {
       const detail = err.stderr ? `${err.message}\n${String(err.stderr).trim()}` : err.message;
       console.error(`  FAILED: ${detail}\n`);
