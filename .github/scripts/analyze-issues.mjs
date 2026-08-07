@@ -10,7 +10,7 @@ const {
   RUN_URL,
   TEAM_KEY,
   STATE_NAME,
-  CLAUDE_MODEL = 'claude-sonnet-4-6',
+  CLAUDE_MODEL = 'claude-sonnet-5',
   MAX_TURNS = '20',
 } = process.env;
 
