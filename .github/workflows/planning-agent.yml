@@ -87,11 +87,9 @@ const ISSUES_QUERY = `
         title
         description
         branchName
-        priority
-        labels(first: 20) { nodes { name } }
+        labels(first: 10) { nodes { name } }
         project { name }
         parent { identifier title }
-        comments(first: 100) { nodes { body } }
       }
       pageInfo { hasNextPage endCursor }
     }
