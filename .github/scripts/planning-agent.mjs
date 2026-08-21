@@ -2,11 +2,12 @@
 //
 // Phase 1: ensure a branch exists off BASE_BRANCH for the issue.
 // Phase 2: check out THAT branch, run Claude against it, and append the
-//          analysis to the issue DESCRIPTION (the original text is kept).
+//          "Plan refinement" appendix to the issue DESCRIPTION (original kept).
 //
 // Idempotent: an existing branch is not recreated, and an issue whose
-// description already carries the analysis marker is not re-analysed. Self-healing: if phase 2
-// failed on an earlier run, the next run retries it without redoing phase 1.
+// description already carries the analysis marker is not re-analysed.
+// Self-healing: if phase 2 failed on an earlier run, the next run retries it
+// without redoing phase 1.
 //
 // Read-only with respect to code: Claude gets Read/Grep/Glob only.
 // Never commits, never opens a PR, never changes issue status.
@@ -87,7 +88,9 @@ const ISSUES_QUERY = `
         title
         description
         branchName
-        comments(first: 100) { nodes { body } }
+        labels(first: 10) { nodes { name } }
+        project { name }
+        parent { identifier title }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -127,32 +130,149 @@ function checkoutIssueBranch(branch) {
   return git(['rev-parse', 'HEAD']).trim();
 }
 
+const TYPE_LABELS = ['Bug', 'Feature', 'Improvement', 'Setup'];
+const DATA_AREAS = ['Database', 'API'];
+
 function buildPrompt(issue, branch) {
+  const labels = (issue.labels?.nodes ?? []).map((l) => l.name);
+  const typeLabel = labels.find((l) => TYPE_LABELS.includes(l)) ?? 'unlabelled';
+  const areaLabels = labels.filter((l) => !TYPE_LABELS.includes(l));
+  const q = (v) => String(v ?? '').replace(/"/g, "'");
+
+  const attrs = [
+    `identifier="${q(issue.identifier)}"`,
+    `title="${q(issue.title)}"`,
+    `type="${typeLabel}"`,
+    areaLabels.length ? `areas="${q(areaLabels.join(', '))}"` : null,
+    issue.project?.name ? `project="${q(issue.project.name)}"` : null,
+    issue.parent ? `parent="${q(issue.parent.identifier)} — ${q(issue.parent.title)}"` : null,
+  ].filter(Boolean).join(' ');
+
+  const byType = {
+    Bug: [
+      'Locate the root cause and cite it with a `file:line` anchor — a plan that fixes a symptom',
+      'without naming the cause is not finished. State it so it can be moved into `## Context`.',
+      'Step 1 of the plan is a failing regression test reproducing the exact scenario in',
+      '`## Problem` (use the production example if the issue gives one); the fix comes after it.',
+    ],
+    Feature: [
+      'Plan unit tests for calculation and business logic, and component tests (Testing Library)',
+      'for new UI states. Extend an existing spec in `e2e/` only if this touches a core flow',
+      '(auth, shifts, time tracking, payroll).',
+    ],
+    Improvement: [
+      'Establish what the current behaviour is before planning the change, and name the tests',
+      'that would catch a regression in it.',
+    ],
+    Setup: [
+      'Tooling/config/infrastructure work. Automated tests may not apply — if not, name the',
+      'commands that prove it works.',
+    ],
+  };
+  const guidance = [
+    ...(byType[typeLabel] ?? [
+      'No type label, so treat this as implementation work: establish current behaviour, then',
+      'plan the change, then the tests that prove it.',
+    ]),
+  ];
+  if (areaLabels.some((l) => DATA_AREAS.includes(l))) {
+    guidance.push(
+      'This touches Database/API: plan RLS tests both ways — the permitted role sees the data,',
+      'and a user without the permission gets an error or an empty result. Never plan only the',
+      'happy path.'
+    );
+  }
+
   return [
-    'You are analysing a codebase to prepare work on a tracked issue.',
-    `The working tree is checked out at branch "${branch}", cut from "${BASE_BRANCH}".`,
-    'You have read-only access. Do not attempt to modify, create or delete any file.',
+    '<role>',
+    'You are the Planning Agent for peeepl-dev. You turn a Linear issue into a plan precise enough',
+    'that a separate AI coding agent can implement it without re-deriving anything. You do not',
+    'write production code and you do not implement the issue.',
+    '</role>',
     '',
-    `## Issue ${issue.identifier}: ${issue.title}`,
+    '<environment>',
+    `Repo checked out at branch "${branch}", cut from "${BASE_BRANCH}". Tools: Read, Grep, Glob (read-only).`,
+    'Verification: `npm run lint` · `npm run test:ci` (Vitest + coverage) · `npx playwright test` (e2e).',
+    'Fixtures live in `e2e/fixtures`. Tests never touch production data; edge-case data (part-time',
+    'contracts, minijob, multi-company users) belongs in fixtures, not inline.',
+    '</environment>',
     '',
+    `<issue ${attrs}>`,
     issue.description || '(no description provided)',
+    '</issue>',
     '',
-    '## Your task',
-    'Produce a markdown document with exactly these three sections:',
+    '<issue_conventions>',
+    'peeepl-dev issues use fixed H2 sections; a section that is absent means "none", not "unknown".',
+    '- `## Out of scope` is binding. Never plan work it excludes.',
+    '- `## Locked decisions` are settled. Do not reopen them or propose alternatives.',
+    '- `## Acceptance criteria` checkboxes are the contract: each must be satisfied by a named',
+    '  test. A later stage diffs checkbox text against test names mechanically, so name tests so',
+    '  that correspondence is obvious to a script. If the issue has no checkboxes, derive them',
+    '  from `## Goal`/`## Problem` and mark each `(proposed)` for a human to confirm.',
+    '- An invariant stated in the issue ("a full absence week changes the time account by exactly',
+    '  0 h") becomes its own named test. These are what the automation gates on.',
+    '- Never plan to rewrite an unrelated test to make it pass. A pre-existing failure on the base',
+    '  branch is reported on the issue, not patched here.',
+    '</issue_conventions>',
     '',
-    '### Codebase analysis',
-    'Which parts of this repository are relevant to the issue. Give concrete file paths.',
-    'Summarise the current state of those parts, and name the conventions and patterns in use.',
+    '<investigate_before_answering>',
+    'Read the code before describing it. Every path, symbol, table, RPC, migration or line number',
+    'you cite must come from a file you opened in this session — not from the issue text, not from',
+    'naming convention, not from what a repo of this kind usually contains.',
+    '',
+    'If the issue implies something exists and you cannot find it, say so plainly ("no migration',
+    'matching `absences` under `supabase/migrations`"). A named gap helps the next agent; a',
+    'confident wrong anchor sends it to the wrong file.',
+    '</investigate_before_answering>',
+    '',
+    '<search_strategy>',
+    'Glob the area the issue names, Grep its domain terms, then Read only the files that matter.',
+    'Prefer several narrow searches over one broad one. Stop once you can name the files a change',
+    'would touch and describe how each behaves today — reading further does not improve the plan.',
+    'If the issue is thin, write a shorter honest plan and put the gaps in "Open questions &',
+    'risks". Never pad.',
+    '</search_strategy>',
+    '',
+    '<type_guidance>',
+    ...guidance,
+    '</type_guidance>',
+    '',
+    '<output_format>',
+    'Your output becomes the "🔍 Plan refinement" appendix on the issue. The human-written sections',
+    'stay above it, so reference them by name — never restate Goal, Problem, Scope or Acceptance',
+    'criteria.',
+    '',
+    'Begin your reply with "### Technical notes / Code anchors". Emit exactly these five H3',
+    'sections in order and nothing else — no preamble, no closing remarks, no H1 or H2 headings.',
+    '',
+    '### Technical notes / Code anchors',
+    'Files, modules, tables, RPCs and migrations this issue touches. Per entry: a `path/file.ts:123`',
+    'anchor plus the enclosing symbol name (line numbers drift, names do not), what it does today,',
+    'and the pattern the implementer must match. Write it so it could be moved verbatim into the',
+    "issue's own `## Technical notes / Code anchors`. End with any gap you found.",
     '',
     '### Integration plan',
-    'A concrete, ordered plan for implementing this issue. The reader is another AI coding',
-    'agent with no prior context, so be specific: name files to touch and what changes where.',
+    'Numbered steps. Each names the file(s) to touch and the concrete change there — executable by',
+    'a coding agent with no prior context and no judgement calls left open. Test steps sit in their',
+    'real position in the sequence, not appended at the end.',
     '',
-    '### Supplementary context',
-    'Anything relevant that is not obvious from the issue text alone.',
+    '### Test plan',
+    'Markdown table: `Acceptance criterion | Test name | File`. One row per checkbox. Test names',
+    'are the actual names you propose, not descriptions. Use `manual` as the test name where',
+    'automation is not possible and say why; if a criterion cannot be met at all, say so in its row',
+    'rather than dropping it. Add a final row stating whether a human usability pass is needed',
+    'before Ready to ship (issues labelled `Design`, or touching employee-facing mobile flows) or',
+    '`n/a`.',
     '',
-    'Output only the markdown document. No preamble, no closing remarks.',
-  ].join('\n');
+    '### Assumptions',
+    'Defaults you applied where the issue was silent, so a human can correct them before the coding',
+    'agent acts. "None." if there are none.',
+    '',
+    '### Open questions & risks',
+    'Real ambiguity, regression risk, dependencies on unfinished work. "None." if there are none —',
+    'no filler.',
+    '</output_format>',
+  ].filter((l) => l !== null).join('\n');
 }
 
 function runClaude(prompt) {
@@ -242,7 +362,7 @@ async function analyseIssue(issue) {
 
   const section = [
     ANALYSIS_MARKER,
-    '## Planning Agent analysis _(automated)_',
+    '## 🔍 Plan refinement _(Planning Agent, automated)_',
     '',
     `Branch \`${branch}\` at commit \`${sha.substring(0, 7)}\`.`,
     RUN_URL ? `[Workflow run](${RUN_URL})` : 'Generated in CI.',
