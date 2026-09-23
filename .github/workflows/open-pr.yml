@@ -1,0 +1,62 @@
+name: Open PR for pushed branch
+
+# Opens ONE draft pull request to BASE for any branch that receives a push and
+# has no open/merged PR yet. Runs with GITHUB_TOKEN, so the PR author is
+# github-actions[bot] — a human can therefore approve and merge it alone.
+#
+# PR title = subject line of the branch's last commit.
+# PR body  = body of that commit (the Coding Agent writes its run report there).
+#
+# Needs: Settings → Actions → General → Workflow permissions →
+#        "Allow GitHub Actions to create and approve pull requests" ticked.
+
+# Edit before committing: the pattern below is "<anything>/<lowercase team key>-*",
+# which is how Linear names issue branches (e.g. yiding/dev-12-add-hello). Only
+# those branches get a PR; main, development and other branches never match.
+on:
+  push:
+    branches:
+      - 'sbx'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: open-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE: development
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Open a draft PR if this branch has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --depth=1 origin "+refs/heads/$BASE:refs/remotes/origin/$BASE"
+          ahead=$(git rev-list --count "origin/$BASE..HEAD")
+          if [ "$ahead" = "0" ]; then
+            echo "No commits ahead of $BASE — nothing to open."
+            exit 0
+          fi
+          existing=$(gh pr list --head "$BRANCH" --state all --json number,state \
+            --jq 'map(select(.state == "OPEN" or .state == "MERGED")) | length')
+          if [ "$existing" != "0" ]; then
+            echo "A PR from $BRANCH already exists — nothing to do."
+            exit 0
+          fi
+          title=$(git log -1 --format=%s)
+          git log -1 --format=%b > "$RUNNER_TEMP/body.md"
+          gh pr create --draft --base "$BASE" --head "$BRANCH" \
+            --title "$title" --body-file "$RUNNER_TEMP/body.md"
