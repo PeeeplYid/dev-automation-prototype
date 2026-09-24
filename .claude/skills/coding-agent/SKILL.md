@@ -13,8 +13,8 @@ Do not skip, reorder or merge steps. Where a step says STOP, go to the "Stop pro
 
 Edit these before committing the file.
 
-- TEAM_KEY: `SBX`
-- TEAM_NAME: `setup-testing`
+- TEAM_KEY: `DEV` — prefix of the issue identifiers (`DEV-12`)
+- TEAM_NAME: `Dev-Automation` — team name as shown in Linear
 - STATE_NAME: `In Development`
 - BASE_BRANCH: `development`
 - VERIFY_COMMANDS: `npm run lint` · `npm run test:ci` — commands separated by ` · `; write `none` when the repo has no verification scripts
@@ -24,7 +24,7 @@ Edit these before committing the file.
 ## Hard rules
 
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
-- Never merge anything. Never open, close, approve or edit a pull request. A workflow opens the PR from your push.
+- Never merge anything. Never open, close, approve, review or edit a pull request — with `gh` or with any GitHub tool. Your only GitHub reads are listing pull requests; a workflow opens the PR from your push.
 - Never change an issue's status, assignee or priority. Labels: only BLOCKED_LABEL.
 - Never push with `git push`. The only push is `node /tmp/coding-agent/coding-agent.mjs push <branch>` (the helper script copied in step 1.1).
 - Never `git add -A`, `git add .` or `git commit -a`. Stage files by name.
@@ -41,7 +41,7 @@ Edit these before committing the file.
 3. For each candidate in order, fetch the full issue and apply these checks; the first issue that passes all of them is the one you work on:
    1. Label BLOCKED_LABEL is absent. (Present → skip; a human is looking at it.)
    2. The description contains `<!-- planning-agent:analysis -->`. (Absent → this issue never had a plan. Add BLOCKED_LABEL, post the comment `<!-- coding-agent:report -->` + "No Plan refinement found on this issue — the Planning Agent runs on issues in Todo. Move it back to Todo, or add the plan, then remove the label `coding-agent-blocked`." Then skip it.)
-   3. Run `node /tmp/coding-agent/coding-agent.mjs guard <gitBranchName> BASE_BRANCH` where `gitBranchName` is the issue's git branch name from Linear. `eligible` must be `true`. (`false` → skip; the printed `reason` says why.)
+   3. Run `node /tmp/coding-agent/coding-agent.mjs guard <gitBranchName> BASE_BRANCH` where `gitBranchName` is the issue's git branch name from Linear. `eligible` must be `true`. (`false` → skip; the printed `reason` says why.) If `prs` is `null`, list pull requests with head `<owner>:<gitBranchName>` and state `all` using your GitHub tools; an OPEN or MERGED one → skip.
 4. No candidate passed → write "No eligible issue in STATE_NAME." as your final message and end the run. Post nothing to Linear.
 5. Write the identifier, title, branch name, and the guard output to `/tmp/coding-agent/issue.md`. List the candidates you skipped with their reasons in your session output.
 6. If the guard output said `resume mode` (commits exist ahead of BASE_BRANCH, no PR): a previous run pushed work but never finished. You will skip step 4 and report what is there.
