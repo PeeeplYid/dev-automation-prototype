@@ -34,5 +34,8 @@
       "WebFetch",
       "WebSearch"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "linear"
+  ]
 }
