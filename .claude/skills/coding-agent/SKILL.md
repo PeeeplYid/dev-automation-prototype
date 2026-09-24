@@ -13,8 +13,8 @@ Do not skip, reorder or merge steps. Where a step says STOP, go to the "Stop pro
 
 Edit these before committing the file.
 
-- TEAM_KEY: `DEV` — prefix of the issue identifiers (`DEV-12`)
-- TEAM_NAME: `Dev-Automation` — team name as shown in Linear
+- TEAM_KEY: `SBX`
+- TEAM_NAME: `setup-testing`
 - STATE_NAME: `In Development`
 - BASE_BRANCH: `development`
 - VERIFY_COMMANDS: `npm run lint` · `npm run test:ci` — commands separated by ` · `; write `none` when the repo has no verification scripts
