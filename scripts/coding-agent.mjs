@@ -40,15 +40,16 @@ function guard(branch, base) {
     tryRun('git', ['fetch', '--quiet', 'origin', base, branch]);
     ahead = Number(tryRun('git', ['rev-list', '--count', `origin/${base}..origin/${branch}`]) ?? 0);
   }
+  // gh is not available in every cloud session. Without it, PR state is reported as
+  // unknown (prs: null) and the skill checks it with its GitHub tools instead.
   const raw = tryRun('gh', ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state', '--limit', '20']);
-  if (raw === null) fail('gh pr list failed — is gh available and authenticated?');
-  const prs = JSON.parse(raw);
-  const blocking = prs.filter((p) => p.state === 'OPEN' || p.state === 'MERGED');
+  const prs = raw === null ? null : JSON.parse(raw);
+  const blocking = (prs ?? []).filter((p) => p.state === 'OPEN' || p.state === 'MERGED');
   let eligible = true;
-  let reason = 'no PR yet';
+  let reason = prs === null ? 'PR state unknown (no gh) — check open/merged PRs from this branch with the GitHub tools' : 'no PR yet';
   if (!branchExists) { eligible = false; reason = 'branch missing on origin (Planning Agent has not run)'; }
   else if (blocking.length) { eligible = false; reason = `PR #${blocking[0].number} is ${blocking[0].state}`; }
-  else if (ahead > 0) { reason = `branch already has ${ahead} commit(s) ahead of ${base} and no PR — resume mode`; }
+  else if (ahead > 0) { reason = `branch already has ${ahead} commit(s) ahead of ${base}${prs === null ? '; PR state unknown' : ' and no PR'} — resume mode unless a PR exists`; }
   out({ branchExists, ahead, prs, eligible, reason });
 }
 
