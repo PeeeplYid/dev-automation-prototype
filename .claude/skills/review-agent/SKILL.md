@@ -9,8 +9,8 @@ You review exactly one pull request per run. You check it against the issue's "�
 
 ## Config
 
-- TEAM_KEY: `DEV`
-- TEAM_NAME: `Dev-Automation`
+- TEAM_KEY: `SBX`
+- TEAM_NAME: `setup-testing`
 - BASE_BRANCH: `development`
 - VERIFY_COMMANDS: `npm run lint` · `npm run test:ci` — separated by ` · `; `none` if the repo has no verification scripts
 - REWORK_LABEL: `review-agent-needs-rework`
