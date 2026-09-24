@@ -1,6 +1,7 @@
 ---
 name: coding-agent
 description: Implements one Linear issue that is "In Development" on the branch the Planning Agent created, verifies it, pushes it and reports back to the issue. Use when asked to run the coding agent.
+allowed-tools: mcp__linear__*
 ---
 
 # Coding Agent
@@ -13,8 +14,8 @@ Do not skip, reorder or merge steps. Where a step says STOP, go to the "Stop pro
 
 Edit these before committing the file.
 
-- TEAM_KEY: `SBX`
-- TEAM_NAME: `setup-testing`
+- TEAM_KEY: `SBX` — prefix of the issue identifiers (`DEV-12`)
+- TEAM_NAME: `setup-testing` — team name as shown in Linear
 - STATE_NAME: `In Development`
 - BASE_BRANCH: `development`
 - VERIFY_COMMANDS: `npm run lint` · `npm run test:ci` — commands separated by ` · `; write `none` when the repo has no verification scripts
@@ -36,7 +37,7 @@ Edit these before committing the file.
 
 ## Step 1 — Select the issue
 
-1. `mkdir -p /tmp/coding-agent && cp scripts/coding-agent.mjs /tmp/coding-agent/` — the helper script is taken from the default-branch checkout now, because an issue branch cut before the script existed does not contain it.
+1. `mkdir -p /tmp/coding-agent && cp "$(git rev-parse --show-toplevel)/scripts/coding-agent.mjs" /tmp/coding-agent/` — the helper script is taken from the default-branch checkout now, because an issue branch cut before the script existed does not contain it.
 2. If the run was started with text naming an identifier matching `TEAM_KEY-<number>` (for example in a `routine-fire-payload` block), that is the only candidate. Otherwise, with the Linear MCP tools (server `linear`), list issues of team TEAM_NAME in state STATE_NAME, ordered by creation date, oldest first. These are the candidates.
 3. For each candidate in order, fetch the full issue and apply these checks; the first issue that passes all of them is the one you work on:
    1. Label BLOCKED_LABEL is absent. (Present → skip; a human is looking at it.)
