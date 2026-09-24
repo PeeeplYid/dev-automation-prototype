@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "mcp__linear"
+      "mcp__linear",
+      "mcp__linear__*"
     ],
     "deny": [
       "Bash(git push:*)",
