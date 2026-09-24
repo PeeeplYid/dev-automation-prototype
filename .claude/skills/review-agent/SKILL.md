@@ -1,6 +1,7 @@
 ---
 name: review-agent
 description: Reviews one pull request to the integration branch against the Linear issue's plan — mechanical checks plus a written review — and reports on the PR and the issue. Never approves or merges. Use when asked to run the review agent.
+allowed-tools: mcp__linear__*
 ---
 
 # Review Agent
