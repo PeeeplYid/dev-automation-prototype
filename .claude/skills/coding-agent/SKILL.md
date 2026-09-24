@@ -13,8 +13,8 @@ Do not skip, reorder or merge steps. Where a step says STOP, go to the "Stop pro
 
 Edit these before committing the file.
 
-- TEAM_KEY: 'SBX'
-- TEAM_NAME: 'setup-testing'
+- TEAM_KEY: `SBX`
+- TEAM_NAME: `setup-testing`
 - STATE_NAME: `In Development`
 - BASE_BRANCH: `development`
 - VERIFY_COMMANDS: `npm run lint` · `npm run test:ci` — commands separated by ` · `; write `none` when the repo has no verification scripts
@@ -23,6 +23,7 @@ Edit these before committing the file.
 
 ## Hard rules
 
+- Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - Never merge anything. Never open, close, approve or edit a pull request. A workflow opens the PR from your push.
 - Never change an issue's status, assignee or priority. Labels: only BLOCKED_LABEL.
 - Never push with `git push`. The only push is `node /tmp/coding-agent/coding-agent.mjs push <branch>` (the helper script copied in step 1.1).
@@ -36,7 +37,7 @@ Edit these before committing the file.
 ## Step 1 — Select the issue
 
 1. `mkdir -p /tmp/coding-agent && cp scripts/coding-agent.mjs /tmp/coding-agent/` — the helper script is taken from the default-branch checkout now, because an issue branch cut before the script existed does not contain it.
-2. If the run was started with text naming an identifier matching `TEAM_KEY-<number>` (for example in a `routine-fire-payload` block), that is the only candidate. Otherwise, with the Linear connector, list issues of team TEAM_NAME in state STATE_NAME, ordered by creation date, oldest first. These are the candidates.
+2. If the run was started with text naming an identifier matching `TEAM_KEY-<number>` (for example in a `routine-fire-payload` block), that is the only candidate. Otherwise, with the Linear MCP tools (server `linear`), list issues of team TEAM_NAME in state STATE_NAME, ordered by creation date, oldest first. These are the candidates.
 3. For each candidate in order, fetch the full issue and apply these checks; the first issue that passes all of them is the one you work on:
    1. Label BLOCKED_LABEL is absent. (Present → skip; a human is looking at it.)
    2. The description contains `<!-- planning-agent:analysis -->`. (Absent → this issue never had a plan. Add BLOCKED_LABEL, post the comment `<!-- coding-agent:report -->` + "No Plan refinement found on this issue — the Planning Agent runs on issues in Todo. Move it back to Todo, or add the plan, then remove the label `coding-agent-blocked`." Then skip it.)
@@ -97,7 +98,7 @@ Edit these before committing the file.
    ```
 3. `node /tmp/coding-agent/coding-agent.mjs push <branch>`
    - Exit code 2 (push refused by the remote): the branch may be protected or carry someone else's commits. Do not retry, do not push anywhere else. Post the refusal verbatim in the Linear comment below and add BLOCKED_LABEL.
-4. With the Linear connector, post a comment on the issue: the line `<!-- coding-agent:report -->`, then the report. Mention that a draft PR to BASE_BRANCH is being opened by the `Open PR for pushed branch` workflow.
+4. With the Linear MCP tools (server `linear`), post a comment on the issue: the line `<!-- coding-agent:report -->`, then the report. Mention that a draft PR to BASE_BRANCH is being opened by the `Open PR for pushed branch` workflow.
 5. End the run with a one-line summary: issue, branch, verification result, PR expected yes/no.
 
 ## Stop procedure
