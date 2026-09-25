@@ -22,6 +22,7 @@ You address review feedback on exactly one issue per run. The issue is in state 
 
 ## Hard rules
 
+- Your final one-line message ends the run: make no tool calls after it (no re-checks, no notifications).
 - Labels of the Linear label group `Pipeline` are exclusive (one per issue): when you add one, remove any other `Pipeline` label on the issue in the same update.
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - GitHub is reached through your GitHub tools (`gh` may not exist in this session). Never merge, approve, review, edit or close a pull request — with any tool. Your GitHub writes: pushing via `node /tmp/rework-agent/coding-agent.mjs push <branch>` and adding a comment to the pull request.
