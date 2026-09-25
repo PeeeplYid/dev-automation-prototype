@@ -15,9 +15,9 @@ You write what the product's users will read. One run covers all issues in STATE
 - STATE_NAME: `Ready to ship`
 - PRODUCT_NAME: `peeepl`
 - NOTES_LANGUAGE: `de` — language of everything a user reads (`de` or `en`)
-- STAGING_URL: `https://staging.example.com` — where screenshots are taken; `none` to skip screenshots
+- STAGING_URL: `none` — where screenshots are taken; `none` to skip screenshots
 - DOC_TITLE: `Release notes — Entwurf` — title of the living draft document in Linear
-- DOC_PROJECT: `dev-automation` — the Linear project whose Documents tab holds the draft (Linear → Projects → the project → Documents)
+- DOC_PROJECT: `Sandbox releases` — the Linear project whose Documents tab holds the draft (Linear → Projects → the project → Documents)
 - SCRATCH: `/tmp/release-notes`
 
 ## Hard rules
