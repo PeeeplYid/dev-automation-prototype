@@ -1,0 +1,48 @@
+# RECONSTRUCTED from the description in the Coding Agent handoff brief (2026-08-31),
+# not copied from the DevAutomation repo. Before using it, compare with
+# https://github.com/peeepl/DevAutomation/blob/main/planning-agent.yml — the repo
+# copy is the source of truth. Known facts it encodes: cron 7,22,37,52 * * * *,
+# workflow_dispatch, ubuntu-latest, checkout@v4, setup-node@v4 (Node 20),
+# npm install -g @anthropic-ai/claude-code, permissions contents: write,
+# a concurrency group, timeout-minutes 45, GITHUB_TOKEN passed as GH_TOKEN.
+
+name: Planning Agent
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: planning-agent
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run Planning Agent
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEAM_KEY: SBX            # Linear team key = prefix of the issue identifiers
+          STATE_NAME: Todo         # workflow state to watch, spelled as in Linear
+          BASE_BRANCH: development # branch new issue branches are cut from
+          MAX_TURNS: '40'          # 20–50 depending on repo size; peeepl-web-v2: 40
+        run: node .github/workflows/planning-agent.mjs
