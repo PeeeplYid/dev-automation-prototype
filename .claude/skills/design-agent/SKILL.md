@@ -1,7 +1,7 @@
 ---
 name: design-agent
 description: Produces a reviewable UI draft for one Linear issue that is "In Design" and links it to the issue. Use when asked to run the design agent.
-allowed-tools: mcp__linear__*
+allowed-tools: mcp__linear__*, Artifact
 ---
 
 # Design Agent
@@ -51,7 +51,7 @@ Edit these before committing the file.
 Try 3a first; use 3b only if the tools for 3a are not available in this session.
 
 **3a — Claude Design canvas (preferred)**
-1. Create a Design artifact (Claude Design canvas) with the Artifact tool, one artboard per screen from your list, using DESIGN_SYSTEM when it is not `none`. Title: `TEAM_KEY-<n> — <issue title>`.
+1. Create a Design artifact (Claude Design canvas) with the Artifact tool, one artboard per screen from your list, using DESIGN_SYSTEM when it is not `none`. Title: `TEAM_KEY-<n> — <issue title>`. Write the canvas files into this session's scratchpad directory (not `/tmp/design-agent`) — the Artifact tool only publishes files from the scratchpad or the working directory. Publish all files in one call.
 2. Add a last artboard `Notes` listing: which acceptance criterion each screen serves, assumptions you made, open questions for the reviewer.
 3. Record the artifact URL in `/tmp/design-agent/link.txt`.
 
