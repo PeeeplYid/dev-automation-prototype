@@ -16,7 +16,7 @@ name: Open PR for pushed branch
 on:
   push:
     branches:
-      - 'sbx'
+      - '*/sbx-*'
 
 permissions:
   contents: read
