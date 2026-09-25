@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toMinutes, shiftHours } from '../src/shifts.mjs';
+import { toMinutes, shiftHours, weeklyHours } from '../src/shifts.mjs';
 
 test('toMinutes converts HH:MM', () => {
   assert.equal(toMinutes('07:30'), 450);
