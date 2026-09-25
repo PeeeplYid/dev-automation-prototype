@@ -14,3 +14,20 @@ export function shiftHours(start, end) {
   if (minutes <= 0) minutes += 24 * 60;
   return minutes / 60;
 }
+
+// Hours of a shift that fall within the recurring 22:00–06:00 night window.
+export function nightHours(start, end) {
+  const sMin = toMinutes(start);
+  let eMin = toMinutes(end);
+  if (eMin <= sMin) eMin += 24 * 60;
+
+  let minutes = 0;
+  // Three day offsets suffice: shiftHours caps shift length at 24h, so the
+  // shift can never span more than one full night window boundary.
+  for (const d of [-1, 0, 1]) {
+    const nightStart = d * 1440 + 1320;
+    const nightEnd = nightStart + 480;
+    minutes += Math.max(0, Math.min(eMin, nightEnd) - Math.max(sMin, nightStart));
+  }
+  return minutes / 60;
+}
