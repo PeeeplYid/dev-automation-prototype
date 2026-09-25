@@ -43,6 +43,7 @@ const ANALYSIS_MARKER = '<!-- planning-agent:analysis -->';
 //                    changed; the agent replaces the appendix and removes the label.
 const PLANNED_LABEL = process.env.PLANNED_LABEL || 'planned';
 const REPLAN_LABEL = process.env.REPLAN_LABEL || 'replan';
+const PIPELINE_GROUP = process.env.PIPELINE_GROUP || 'Pipeline';
 const LINEAR_URL = 'https://api.linear.app/graphql';
 const GH_API = 'https://api.github.com';
 // --------------------------------------------------------------- API helpers
@@ -88,7 +89,7 @@ const ISSUES_QUERY = `
         title
         description
         branchName
-        labels(first: 20) { nodes { id name } }
+        labels(first: 20) { nodes { id name parent { name } } }
         project { name }
         parent { identifier title }
       }
@@ -418,7 +419,11 @@ async function main() {
       // Labels: drop REPLAN, ensure PLANNED. Nothing else on the issue is touched.
       if (replan && labelIds[REPLAN_LABEL]) await removeLabel(issue.id, labelIds[REPLAN_LABEL]);
       const hasPlanned = currentLabels.some((l) => l.name === PLANNED_LABEL);
-      if (labelIds[PLANNED_LABEL] && !hasPlanned) await addLabel(issue.id, labelIds[PLANNED_LABEL]);
+      if (labelIds[PLANNED_LABEL] && !hasPlanned) {
+        // Pipeline labels are exclusive (Linear label group "Pipeline"): drop any other one first.
+        for (const l of currentLabels) if (l.parent?.name === PIPELINE_GROUP && l.name !== PLANNED_LABEL && l.name !== REPLAN_LABEL) await removeLabel(issue.id, l.id);
+        await addLabel(issue.id, labelIds[PLANNED_LABEL]);
+      }
       console.log(`  analysis written to description${labelIds[PLANNED_LABEL] ? `; label "${PLANNED_LABEL}" set` : ''}${replan ? `; label "${REPLAN_LABEL}" removed` : ''}.\n`);
     } catch (err) {
       const detail = err.stderr ? `${err.message}\n${String(err.stderr).trim()}` : err.message;
