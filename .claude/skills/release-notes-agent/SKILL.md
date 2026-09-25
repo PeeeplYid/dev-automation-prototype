@@ -15,13 +15,14 @@ You write what the product's users will read. One run covers all issues in STATE
 - STATE_NAME: `Ready to ship`
 - PRODUCT_NAME: `peeepl`
 - NOTES_LANGUAGE: `de` — language of everything a user reads (`de` or `en`)
-- STAGING_URL: `none`
-- DOC_TITLE: `Release notes — Entwurf`
-- DOC_PROJECT: `Sandbox release`
+- STAGING_URL: `https://staging.example.com` — where screenshots are taken; `none` to skip screenshots
+- DOC_TITLE: `Release notes — Entwurf` — title of the living draft document in Linear
+- DOC_PROJECT: `dev-automation` — the Linear project whose Documents tab holds the draft (Linear → Projects → the project → Documents)
 - SCRATCH: `/tmp/release-notes`
 
 ## Hard rules
 
+- Your final one-line message ends the run: make no tool calls after it (no re-checks, no notifications).
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - Never change an issue's status, labels, assignee. Your writes: comments, attachments, the draft document.
 - Never push to the repository. Never merge.
