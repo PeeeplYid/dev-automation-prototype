@@ -47,7 +47,7 @@ const PIPELINE_GROUP = process.env.PIPELINE_GROUP || 'Pipeline';
 const LINEAR_URL = 'https://api.linear.app/graphql';
 const GH_API = 'https://api.github.com';
 // --------------------------------------------------------------- API helpers
-async function linear(query, variables = {}) {
+async function linear(query, variables = {}, attempt = 1) {
   const res = await fetch(LINEAR_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
@@ -58,7 +58,15 @@ async function linear(query, variables = {}) {
       `Linear rejected the API key (HTTP ${res.status}). Check LINEAR_API_KEY and its access to team ${TEAM_KEY}.`
     );
   }
-  const json = await res.json();
+  // Retries transient Linear outages (5xx / non-JSON bodies such as "upstream connect error").
+  const text = await res.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if ((!json || res.status >= 500) && attempt < 4) {
+    console.warn(`Linear HTTP ${res.status}, retry ${attempt}/3 in ${attempt * 5}s`);
+    await new Promise((r) => setTimeout(r, attempt * 5000));
+    return linear(query, variables, attempt + 1);
+  }
+  if (!json) throw new Error(`Linear API unavailable (HTTP ${res.status}): ${text.slice(0, 200)}`);
   if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
   return json.data;
 }

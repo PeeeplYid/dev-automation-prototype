@@ -19,6 +19,7 @@ You review exactly one pull request per run. You check it against the issue's "�
 
 ## Hard rules
 
+- Your final one-line message ends the run: make no tool calls after it (no re-checks, no notifications).
 - Labels of the Linear label group `Pipeline` are exclusive (one per issue): when you add one, remove any other `Pipeline` label on the issue in the same update.
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - GitHub is reached through your GitHub tools (`gh` may not exist in this session). Allowed: listing and reading pull requests, their diffs and comments, and adding a comment to a pull request. Never approve, review, request changes, merge, mark ready, edit or close a pull request — with any tool.
