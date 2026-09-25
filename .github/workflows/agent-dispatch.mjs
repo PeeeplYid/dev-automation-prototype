@@ -64,8 +64,8 @@ const ISSUES = `query($teamKey: String!, $states: [String!]) {
 const COMMENT = `mutation($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success } }`;
 
 const has = (issue, label) => issue.labels.nodes.some((l) => l.name === label);
-const recentlyFired = (issue, agent) => issue.comments.nodes.some((c) =>
-  c.body.includes(`<!-- agent-dispatch:${agent} -->`) && Date.now() - Date.parse(c.createdAt) < GUARD_MINUTES * 60000);
+const recentlyFired = (issue, guard) => issue.comments.nodes.some((c) =>
+  c.body.includes(`<!-- agent-dispatch:${guard} -->`) && Date.now() - Date.parse(c.createdAt) < GUARD_MINUTES * 60000);
 const isAgent = (body) => AGENT_MARKERS.some((m) => (body || '').includes(m));
 
 async function openPrFor(branch) {
@@ -95,6 +95,7 @@ async function decide(issues) {
     if ((state === STATES.rework || has(i, L.needsRework)) && !has(i, L.codingBlocked) && i.branchName) {
       const pr = (await openPrFor(i.branchName)).find((p) => p.state === 'open');
       if (pr) {
+        const reworkGuard = `rework sha=${pr.head?.sha ?? pr.number}`;
         const [comments, inline, reviews] = await Promise.all([
           gh(`issues/${pr.number}/comments?per_page=100`), gh(`pulls/${pr.number}/comments?per_page=100`), gh(`pulls/${pr.number}/reviews?per_page=100`)]);
         const reports = comments.filter((c) => c.body.includes('<!-- rework-agent:report')).map((c) => c.created_at);
@@ -104,7 +105,7 @@ async function decide(issues) {
           ...inline.map((c) => c.created_at),
           ...reviews.filter((r) => r.state !== 'PENDING' && r.body !== null).map((r) => r.submitted_at),
         ].filter((t) => t && t > since);
-        if (feedback.length) plan.push({ agent: 'rework', issue: i });
+        if (feedback.length) plan.push({ agent: 'rework', issue: i, guard: reworkGuard });
       }
     }
 
@@ -122,7 +123,7 @@ async function decide(issues) {
     const m = pr.head.ref.match(new RegExp(`/${key}-(\\d+)`));
     const issue = m && issues.find((x) => x.identifier === `${TEAM_KEY}-${m[1]}`);
     if (issue && has(issue, L.needsRework)) continue; // rework pending on this head; review after the push
-    plan.push({ agent: 'review', issue, text: String(pr.number) });
+    plan.push({ agent: 'review', issue, text: String(pr.number), guard: `review sha=${pr.head.sha}` }); // guard per commit: a new push may be reviewed at once
   }
 }
 
@@ -130,7 +131,7 @@ async function fire(step) {
   const r = routine(step.agent.toUpperCase());
   const label = `${step.agent} ${step.issue?.identifier ?? ''} ${step.text ?? ''}`.trim();
   if (!r) { console.log(`skip ${label}: routine URL/token not configured`); return false; }
-  if (step.issue && recentlyFired(step.issue, step.agent)) { console.log(`skip ${label}: fired < ${GUARD_MINUTES} min ago`); return false; }
+  if (step.issue && recentlyFired(step.issue, step.guard ?? step.agent)) { console.log(`skip ${label}: fired < ${GUARD_MINUTES} min ago`); return false; }
   const text = step.text ?? step.issue.identifier;
   if (DRY) { console.log(`DRY fire ${label}`); return true; }
   const res = await fetch(r.url, {
@@ -142,7 +143,7 @@ async function fire(step) {
   if (!res.ok) { console.error(`fire ${label} failed: HTTP ${res.status} ${body.slice(0, 200)}`); return false; }
   let url = ''; try { url = JSON.parse(body).claude_code_session_url || ''; } catch {}
   console.log(`fired ${label} → ${url}`);
-  if (step.issue) await linear(COMMENT, { issueId: step.issue.id, body: `<!-- agent-dispatch:${step.agent} -->\nDispatcher started the ${step.agent.replace('_', ' ')} agent${step.text ? ` (${step.text})` : ''}: ${url || 'session link unavailable'}` });
+  if (step.issue) await linear(COMMENT, { issueId: step.issue.id, body: `<!-- agent-dispatch:${step.guard ?? step.agent} -->\nDispatcher started the ${step.agent.replace('_', ' ')} agent${step.text ? ` (${step.text})` : ''}: ${url || 'session link unavailable'}` });
   return true;
 }
 
