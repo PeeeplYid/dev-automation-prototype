@@ -141,6 +141,12 @@ export function stripAppendix(description) {
   if (bare !== -1) return text.slice(0, bare).replace(/\n+---\s*$/, '').trimEnd();
   return text.trimEnd();
 }
+// Re-plan number shown in the appendix heading: 0 = first plan, n = n-th re-plan.
+export function nextPlanNumber(description, replan) {
+  if (!replan) return 0;
+  const m = (description || '').match(/re-plan \\?#(\d+)/);
+  return m ? Number(m[1]) + 1 : 1;
+}
 const setDescription = (id, description) =>
   linear(UPDATE_DESCRIPTION_MUTATION, { id, description });
 // ------------------------------------------------------------------ git / AI
@@ -358,7 +364,7 @@ async function ensureBranch(issue, baseSha) {
   );
   return true;
 }
-async function analyseIssue(issue, originalDescription) {
+async function analyseIssue(issue, originalDescription, planNumber = 0) {
   const branch = issue.branchName;
   const sha = checkoutIssueBranch(branch);
   console.log(`  checked out "${branch}" at ${sha.substring(0, 7)}; invoking Claude...`);
@@ -368,7 +374,9 @@ async function analyseIssue(issue, originalDescription) {
   const original = originalDescription.trimEnd();
   const section = [
     ANALYSIS_MARKER,
-    '## 🔍 Plan refinement _(Planning Agent, automated)_',
+    planNumber > 0
+      ? `## 🔍 Plan refinement — re-plan #${planNumber} _(Planning Agent, automated, ${new Date().toISOString().slice(0, 10)})_`
+      : '## 🔍 Plan refinement _(Planning Agent, automated)_',
     '',
     `Branch \`${branch}\` at commit \`${sha.substring(0, 7)}\`.`,
     RUN_URL ? `[Workflow run](${RUN_URL})` : 'Generated in CI.',
@@ -406,7 +414,7 @@ async function main() {
         continue;
       }
       if (replan) console.log(`  label "${REPLAN_LABEL}" present - replacing the previous appendix.`);
-      await analyseIssue(issue, stripAppendix(issue.description));
+      await analyseIssue(issue, stripAppendix(issue.description), nextPlanNumber(issue.description, replan));
       // Labels: drop REPLAN, ensure PLANNED. Nothing else on the issue is touched.
       if (replan && labelIds[REPLAN_LABEL]) await removeLabel(issue.id, labelIds[REPLAN_LABEL]);
       const hasPlanned = currentLabels.some((l) => l.name === PLANNED_LABEL);
