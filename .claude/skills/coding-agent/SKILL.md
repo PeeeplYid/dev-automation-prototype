@@ -24,6 +24,7 @@ Edit these before committing the file.
 
 ## Hard rules
 
+- Labels of the Linear label group `Pipeline` are exclusive (one per issue): when you add one, remove any other `Pipeline` label on the issue in the same update.
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - Never merge anything. Never open, close, approve, review or edit a pull request — with `gh` or with any GitHub tool. Your only GitHub reads are listing pull requests; a workflow opens the PR from your push.
 - Never change an issue's status, assignee or priority. Labels: only BLOCKED_LABEL.
