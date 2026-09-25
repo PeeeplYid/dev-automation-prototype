@@ -15,9 +15,9 @@ You write what the product's users will read. One run covers all issues in STATE
 - STATE_NAME: `Ready to ship`
 - PRODUCT_NAME: `peeepl`
 - NOTES_LANGUAGE: `de` — language of everything a user reads (`de` or `en`)
-- STAGING_URL: `https://staging.example.com` — where screenshots are taken; `none` to skip screenshots
+- STAGING_URL: `none` — where screenshots are taken; `none` to skip screenshots
 - DOC_TITLE: `Release notes — Entwurf` — title of the living draft document in Linear
-- DOC_PROJECT: `dev-automation` — the Linear project whose Documents tab holds the draft (Linear → Projects → the project → Documents)
+- DOC_PROJECT: `Sandbox releases` — the Linear project whose Documents tab holds the draft (Linear → Projects → the project → Documents)
 - SCRATCH: `/tmp/release-notes`
 
 ## Hard rules
@@ -34,6 +34,7 @@ You write what the product's users will read. One run covers all issues in STATE
 
 1. `mkdir -p /tmp/release-notes`
 2. List issues of team TEAM_NAME in state STATE_NAME (Linear MCP tools), oldest first. None → final message "Nothing in STATE_NAME." End.
+   If the run was started with text naming `TEAM_KEY-<number>` (routine-fire-payload), write the entry (step 2) only for that issue; the draft document (step 3 onwards) still reflects all issues in STATE_NAME.
 3. Fingerprint = identifiers sorted and joined with `,`. Find the document titled DOC_TITLE among the documents of project DOC_PROJECT (Linear MCP tools: list documents filtered by that project). If its body contains `<!-- release-notes:set <fingerprint> -->` → nothing changed since the last run; end with "Draft up to date."
 4. For each issue, fetch: title, labels (type: Bug / Feature / Improvement / Setup; areas), `## Goal` or `## Problem`, the latest comment starting with `<!-- coding-agent:report` (its `### Release note` and `### Files changed` sections), and whether a comment starting with `<!-- release-notes:entry -->` exists.
 
