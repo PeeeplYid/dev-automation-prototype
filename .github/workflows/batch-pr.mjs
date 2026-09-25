@@ -30,15 +30,24 @@ const PR_MARKER = `<!-- ${PR_MARKER_NAME} -->`;
 const LINEAR_URL = 'https://api.linear.app/graphql';
 
 async function linear(query, variables = {}) {
-  const res = await fetch(LINEAR_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
-    body: JSON.stringify({ query, variables }),
-  });
-  if (res.status === 401 || res.status === 403) throw new Error(`Linear rejected the API key (HTTP ${res.status}).`);
-  const json = await res.json();
-  if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
-  return json.data;
+  // Retries transient Linear outages (5xx / non-JSON bodies such as "upstream connect error").
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(LINEAR_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
+      body: JSON.stringify({ query, variables }),
+    });
+    if (res.status === 401 || res.status === 403) throw new Error(`Linear rejected the API key (HTTP ${res.status}).`);
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = null; }
+    if (!json || res.status >= 500) {
+      if (attempt < 4) { console.warn(`Linear HTTP ${res.status}, not JSON or server error — retry ${attempt}/3 in ${attempt * 5}s`); await new Promise((r) => setTimeout(r, attempt * 5000)); continue; }
+      throw new Error(`Linear API unavailable after 4 attempts (HTTP ${res.status}): ${text.slice(0, 200)}`);
+    }
+    if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
+    return json.data;
+  }
 }
 function gh(args) {
   try {
