@@ -100,7 +100,7 @@ async function decide(issues) {
         const reports = comments.filter((c) => c.body.includes('<!-- rework-agent:report')).map((c) => c.created_at);
         const since = reports.sort().at(-1) || '';
         const feedback = [
-          ...comments.filter((c) => !isAgent(c.body) || (has(i, L.needsRework) && c.body.includes('<!-- review-agent:report'))).map((c) => c.created_at),
+          ...comments.filter((c) => !isAgent(c.body) || (has(i, L.needsRework) && c.body.includes('<!-- review-agent:'))).map((c) => c.created_at),
           ...inline.map((c) => c.created_at),
           ...reviews.filter((r) => r.state !== 'PENDING' && r.body !== null).map((r) => r.submitted_at),
         ].filter((t) => t && t > since);
@@ -118,7 +118,7 @@ async function decide(issues) {
   for (const pr of prs || []) {
     if (!pr.head.ref.includes(`/${key}-`)) continue;
     const comments = await gh(`issues/${pr.number}/comments?per_page=100`);
-    if (comments.some((c) => c.body.includes(`<!-- review-agent:report sha=${pr.head.sha}`))) continue;
+    if (comments.some((c) => c.body.includes(`review-agent:review sha=${pr.head.sha}`) || c.body.includes(`review-agent:report sha=${pr.head.sha}`))) continue; // PR comment uses :review, Linear copy :report
     const m = pr.head.ref.match(new RegExp(`/${key}-(\\d+)`));
     const issue = m && issues.find((x) => x.identifier === `${TEAM_KEY}-${m[1]}`);
     if (issue && has(issue, L.needsRework)) continue; // rework pending on this head; review after the push
