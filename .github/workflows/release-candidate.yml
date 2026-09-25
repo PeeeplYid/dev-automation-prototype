@@ -1,0 +1,50 @@
+name: Release Candidate
+
+# Keeps one pull request development → staging open while issues sit in
+# "Release Candidate", and links it from each issue. Merging that PR is a
+# human action; it deploys staging and starts the Test Engineer workflow.
+#
+# Needs: Settings → Actions → General → Workflow permissions →
+#        "Allow GitHub Actions to create and approve pull requests" ticked,
+#        and the LINEAR_API_KEY secret from Automation part 1.
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: release-candidate
+  cancel-in-progress: false
+
+jobs:
+  staging-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Open or update the staging PR and link it from the issues
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEAM_KEY: SBX                    # Edit before committing: Linear team key
+          STATE_NAME: Release Candidate    # state that means "ready for staging"
+          BASE_BRANCH: development
+          TARGET_BRANCH: staging           # branch your staging environment deploys from
+          PR_TITLE: Release candidate
+          PR_MARKER_NAME: release-candidate:pr
+        run: node .github/workflows/batch-pr.mjs
