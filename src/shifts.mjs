@@ -14,3 +14,8 @@ export function shiftHours(start, end) {
   if (minutes <= 0) minutes += 24 * 60;
   return minutes / 60;
 }
+
+// Sum of shiftHours over a list of shifts.
+export function weeklyHours(shifts) {
+  return shifts.reduce((total, { start, end }) => total + shiftHours(start, end), 0);
+}
