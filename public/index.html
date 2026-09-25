@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Schichten</title>
+  <style>
+    :root { --accent: #ff6b35; --text: #1f2430; --muted: #6b7280; --bg: #f7f7f8; --card: #fff; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--card); padding: 16px 24px; border-bottom: 1px solid #e5e7eb; font-weight: 600; }
+    main { max-width: 720px; margin: 24px auto; padding: 0 16px; }
+    .shift { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 12px; display: flex; justify-content: space-between; }
+    .shift small { color: var(--muted); }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>peeepl · Schichten</header>
+  <main>
+    <p><button>Schicht anlegen</button></p>
+    <div class="shift"><div><strong>Frühdienst</strong><br><small>Mo, 29.09. · 06:00–14:00</small></div><span>8 h</span></div>
+    <div class="shift"><div><strong>Spätdienst</strong><br><small>Mo, 29.09. · 14:00–22:00</small></div><span>8 h</span></div>
+  </main>
+</body>
+</html>
