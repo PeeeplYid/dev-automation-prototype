@@ -109,9 +109,9 @@ async function decide(issues) {
       }
     }
 
-    // Release notes: Ready to ship without an entry (one fire covers all issues).
+    // Release notes: Ready to ship without an entry — one session per issue.
     if (state === STATES.ready && !i.comments.nodes.some((c) => c.body.includes('<!-- release-notes:entry'))
-      && !plan.some((p) => p.agent === 'release_notes')) plan.push({ agent: 'release_notes', issue: i, text: '' });
+) plan.push({ agent: 'release_notes', issue: i }); // one session per issue
   }
 
   // Review: open PRs to BASE from issue branches without a review for the current head.
