@@ -1,6 +1,6 @@
 ---
 name: rework-agent
-description: Revises the open pull request of one Linear issue in "Rework" according to the review feedback, on the same branch, and reports back. Use when asked to run the rework agent.
+description: Revises the open pull request of one Linear issue in "Rework" or labelled review-agent-needs-rework according to the review feedback, on the same branch, and reports back. Use when asked to run the rework agent.
 allowed-tools: mcp__linear__*
 ---
 
@@ -16,13 +16,16 @@ You address review feedback on exactly one issue per run. The issue is in state 
 - BASE_BRANCH: `development`
 - VERIFY_COMMANDS: `npm run lint` · `npm run test:ci` — separated by ` · `; `none` if the repo has no verification scripts
 - BLOCKED_LABEL: `coding-agent-blocked`
+- REVIEW_LABEL: `review-agent-needs-rework` — set by the Review Agent; triggers an automatic rework
+- MAX_AUTO_ROUNDS: `2`
 - SCRATCH: `/tmp/rework-agent`
 
 ## Hard rules
 
+- Labels of the Linear label group `Pipeline` are exclusive (one per issue): when you add one, remove any other `Pipeline` label on the issue in the same update.
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - GitHub is reached through your GitHub tools (`gh` may not exist in this session). Never merge, approve, review, edit or close a pull request — with any tool. Your GitHub writes: pushing via `node /tmp/rework-agent/coding-agent.mjs push <branch>` and adding a comment to the pull request.
-- Never change an issue's status. Labels: only BLOCKED_LABEL.
+- Never change an issue's status. Labels: only BLOCKED_LABEL, and removing REVIEW_LABEL after a successful push (step 5).
 - Never `git push`, `git add -A`, `git commit -a`. Stage by name.
 - Feedback extends the plan: you may touch the files the plan names plus the files a comment names explicitly, plus tests for them. Nothing else.
 - A comment asking for something `## Out of scope` excludes, or contradicting `## Locked decisions`, is not implemented — it is answered (step 5) and the issue is stopped for a human.
@@ -31,13 +34,14 @@ You address review feedback on exactly one issue per run. The issue is in state 
 ## Step 1 — Select the issue
 
 1. `mkdir -p /tmp/rework-agent && cp "$(git rev-parse --show-toplevel)/scripts/coding-agent.mjs" /tmp/rework-agent/` — taken from the default-branch checkout; the issue branch may predate it.
-2. If the run was started with text naming `TEAM_KEY-<number>`, that is the only candidate. Otherwise list issues of team TEAM_NAME in state STATE_NAME, oldest first.
+2. If the run was started with text naming `TEAM_KEY-<number>`, that is the only candidate. Otherwise list issues of team TEAM_NAME in state STATE_NAME, plus issues in any state carrying REVIEW_LABEL, oldest first.
 3. First candidate that passes:
    1. BLOCKED_LABEL absent.
    2. With your GitHub tools, list open pull requests with head `<owner>:<gitBranchName>`: exactly one must exist. (None → comment `<!-- rework-agent:report -->` "No open PR for this branch — nothing to rework", add BLOCKED_LABEL, skip.)
    3. Find the newest comment on the issue starting with `<!-- rework-agent:report` or `<!-- coding-agent:report`; note its timestamp as SINCE (none → SINCE empty).
    4. With your GitHub tools, read the pull request's reviews (not pending ones), its inline review comments (path, line, text) and its conversation comments; keep those created after SINCE. Treat a comment starting with `<!-- review-agent:review` as the Review Agent's findings. Save them to `/tmp/rework-agent/feedback.md`. Also collect Linear comments on the issue newer than SINCE that are not automation reports.
    5. If both are empty (no new feedback) → skip; nothing to do.
+   6. Issue carries REVIEW_LABEL and already has MAX_AUTO_ROUNDS comments starting `<!-- rework-agent:report` since the last human feedback → replace REVIEW_LABEL with BLOCKED_LABEL, comment `<!-- rework-agent:report -->` "Automatic rework limit reached — the Review Agent still asks for changes. A human decides next.", skip.
 4. No candidate → final message "No eligible issue in STATE_NAME." End the run.
 
 ## Step 2 — Prepare
@@ -78,12 +82,13 @@ You address review feedback on exactly one issue per run. The issue is in state 
    |---|---|
 
    ### Next
-   - Push done; the PR is updated and the Review Agent re-reviews it. Move the issue back to In Review when you are satisfied.
+   - Push done; the Review Agent re-reviews the new head automatically (dispatcher, ≤ 15 min).
    ```
    (`sha` is filled after the push: `git rev-parse HEAD`.)
 2. `node /tmp/rework-agent/coding-agent.mjs push <branch>` — refused (exit 2) → STOP with the refusal text.
 3. Fill in the sha, then add the report as a comment on the pull request with your GitHub tools, and post the same text as a Linear comment.
 4. Do not reply to or resolve inline review threads; the report table (source → done) is the answer.
+   If the issue carries REVIEW_LABEL: remove it now (the next Review Agent run judges the new head).
 5. End the run with one line: issue, PR, items done / not done.
 
 ## Stop procedure

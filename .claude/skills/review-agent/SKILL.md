@@ -19,6 +19,7 @@ You review exactly one pull request per run. You check it against the issue's "�
 
 ## Hard rules
 
+- Labels of the Linear label group `Pipeline` are exclusive (one per issue): when you add one, remove any other `Pipeline` label on the issue in the same update.
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - GitHub is reached through your GitHub tools (`gh` may not exist in this session). Allowed: listing and reading pull requests, their diffs and comments, and adding a comment to a pull request. Never approve, review, request changes, merge, mark ready, edit or close a pull request — with any tool.
 - Never push. Never modify files in the checkout (you may run the verification commands, which may write build output — that is fine).
@@ -92,5 +93,5 @@ Read the full diff (`git diff origin/BASE_BRANCH...HEAD`) with the plan beside i
    ```
    Verdict is NEEDS REWORK when any of: a non-manual test row is missing, a guardrail file changed, a verification command fails on code this PR touched, an undeclared deviation from the plan, or an `## Out of scope`/`## Locked decisions` violation. Otherwise READY FOR HUMAN REVIEW — which means "a human can now spend their time on it", not "approved".
 2. Add the content of `/tmp/review-agent/review.md` as a comment on the pull request with your GitHub tools.
-3. With the Linear MCP tools (server `linear`): post the same text as a comment on the issue, first line replaced by `<!-- review-agent:report sha=<head sha> -->`. Verdict NEEDS REWORK → add label REWORK_LABEL (create on the team if missing). Verdict READY → remove REWORK_LABEL if present.
+3. With the Linear MCP tools (server `linear`): post the same text as a comment on the issue, first line replaced by `<!-- review-agent:report sha=<head sha> -->`. Verdict NEEDS REWORK → set label REWORK_LABEL (create it in the team's `Pipeline` label group if missing); the Rework Agent then picks the issue up automatically. Verdict READY → remove REWORK_LABEL if present.
 4. End the run with one line: PR number, verdict, number of findings.
