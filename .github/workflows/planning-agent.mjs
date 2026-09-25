@@ -5,15 +5,17 @@
 //          "Plan refinement" appendix to the issue DESCRIPTION (original kept).
 //
 // Idempotent: an existing branch is not recreated, and an issue whose
-// description already carries the analysis marker is not re-analysed.
+// description already carries the analysis marker is not re-analysed — unless a
+// human sets the REPLAN label, in which case the appendix is regenerated once and
+// the label removed. After every analysis the PLANNED label marks the issue as
+// documented for the human gate.
 // Self-healing: if phase 2 failed on an earlier run, the next run retries it
 // without redoing phase 1.
 //
-// Read-only with respect to code: Claude gets Read/Grep/Glob only.
+// Read-only with respect to code: Claude gets Read/Grep/Glob only, enforced by
+// --permission-mode dontAsk (an allowlist has no effect under bypassPermissions).
 // Never commits, never opens a PR, never changes issue status.
-
 import { execFileSync } from 'node:child_process';
-
 const {
   LINEAR_API_KEY,
   GH_TOKEN,
@@ -25,7 +27,6 @@ const {
   CLAUDE_MODEL = 'claude-sonnet-5',
   MAX_TURNS = '20',
 } = process.env;
-
 for (const [k, v] of Object.entries({
   LINEAR_API_KEY, GH_TOKEN, REPO, TEAM_KEY, STATE_NAME, BASE_BRANCH,
 })) {
@@ -34,32 +35,32 @@ for (const [k, v] of Object.entries({
     process.exit(1);
   }
 }
-
 const BRANCH_MARKER = '<!-- planning-agent:branch -->';
 const ANALYSIS_MARKER = '<!-- planning-agent:analysis -->';
+// Labels driving the re-plan loop. Both must exist on the team (see guide).
+//   PLANNED_LABEL  — set by this agent once the appendix is written ("Documented").
+//   REPLAN_LABEL   — set by a human to request a fresh analysis after the issue was
+//                    changed; the agent replaces the appendix and removes the label.
+const PLANNED_LABEL = process.env.PLANNED_LABEL || 'planned';
+const REPLAN_LABEL = process.env.REPLAN_LABEL || 'replan';
 const LINEAR_URL = 'https://api.linear.app/graphql';
 const GH_API = 'https://api.github.com';
-
 // --------------------------------------------------------------- API helpers
-
 async function linear(query, variables = {}) {
   const res = await fetch(LINEAR_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
     body: JSON.stringify({ query, variables }),
   });
-
   if (res.status === 401 || res.status === 403) {
     throw new Error(
       `Linear rejected the API key (HTTP ${res.status}). Check LINEAR_API_KEY and its access to team ${TEAM_KEY}.`
     );
   }
-
   const json = await res.json();
   if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
   return json.data;
 }
-
 async function github(path, options = {}) {
   return fetch(`${GH_API}${path}`, {
     ...options,
@@ -71,7 +72,6 @@ async function github(path, options = {}) {
     },
   });
 }
-
 const ISSUES_QUERY = `
   query($teamKey: String!, $stateName: String!, $after: String) {
     issues(
@@ -88,7 +88,7 @@ const ISSUES_QUERY = `
         title
         description
         branchName
-        labels(first: 10) { nodes { name } }
+        labels(first: 20) { nodes { id name } }
         project { name }
         parent { identifier title }
       }
@@ -96,13 +96,11 @@ const ISSUES_QUERY = `
     }
   }
 `;
-
 const COMMENT_MUTATION = `
   mutation($issueId: String!, $body: String!) {
     commentCreate(input: { issueId: $issueId, body: $body }) { success }
   }
 `;
-
 // Only ever sets `description`. Status, assignee, labels etc. are never passed,
 // so this cannot advance the issue's state.
 const UPDATE_DESCRIPTION_MUTATION = `
@@ -110,18 +108,45 @@ const UPDATE_DESCRIPTION_MUTATION = `
     issueUpdate(id: $id, input: { description: $description }) { success }
   }
 `;
-
+const LABELS_QUERY = `
+  query($teamKey: String!, $names: [String!]!) {
+    issueLabels(filter: { team: { key: { eq: $teamKey } }, name: { in: $names } }, first: 20) {
+      nodes { id name }
+    }
+  }
+`;
+// Label add/remove only — never status, never the rest of the label set.
+const ADD_LABEL_MUTATION = `mutation($id: String!, $labelId: String!) { issueAddLabel(id: $id, labelId: $labelId) { success } }`;
+const REMOVE_LABEL_MUTATION = `mutation($id: String!, $labelId: String!) { issueRemoveLabel(id: $id, labelId: $labelId) { success } }`;
 const comment = (issueId, body) => linear(COMMENT_MUTATION, { issueId, body });
-
+const addLabel = (id, labelId) => linear(ADD_LABEL_MUTATION, { id, labelId });
+const removeLabel = (id, labelId) => linear(REMOVE_LABEL_MUTATION, { id, labelId });
+// Resolve the two loop labels once per run. A missing label disables that half of
+// the loop with a warning instead of failing the run, so part 1 works before the
+// labels exist (create them as TEAM labels, not workspace labels).
+async function loadLoopLabels() {
+  const data = await linear(LABELS_QUERY, { teamKey: TEAM_KEY, names: [PLANNED_LABEL, REPLAN_LABEL] });
+  const byName = Object.fromEntries(data.issueLabels.nodes.map((l) => [l.name, l.id]));
+  for (const name of [PLANNED_LABEL, REPLAN_LABEL]) {
+    if (!byName[name]) console.warn(`Warning: team label "${name}" not found on team ${TEAM_KEY} — the "${name}" part of the re-plan loop is off until you create it (Linear → Settings → Teams → ${TEAM_KEY} → Labels).`);
+  }
+  return byName;
+}
+// Description without a previous appendix (everything from the separator + marker on).
+export function stripAppendix(description) {
+  const text = description || '';
+  const sep = text.indexOf(`\n\n---\n\n${ANALYSIS_MARKER}`);
+  if (sep !== -1) return text.slice(0, sep).trimEnd();
+  const bare = text.indexOf(ANALYSIS_MARKER);
+  if (bare !== -1) return text.slice(0, bare).replace(/\n+---\s*$/, '').trimEnd();
+  return text.trimEnd();
+}
 const setDescription = (id, description) =>
   linear(UPDATE_DESCRIPTION_MUTATION, { id, description });
-
 // ------------------------------------------------------------------ git / AI
-
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
-
 // Check out the issue's own branch so Claude analyses that tree, not the
 // branch the workflow happens to be running from.
 function checkoutIssueBranch(branch) {
@@ -129,16 +154,13 @@ function checkoutIssueBranch(branch) {
   git(['checkout', '-B', branch, 'FETCH_HEAD']);
   return git(['rev-parse', 'HEAD']).trim();
 }
-
 const TYPE_LABELS = ['Bug', 'Feature', 'Improvement', 'Setup'];
 const DATA_AREAS = ['Database', 'API'];
-
 function buildPrompt(issue, branch) {
   const labels = (issue.labels?.nodes ?? []).map((l) => l.name);
   const typeLabel = labels.find((l) => TYPE_LABELS.includes(l)) ?? 'unlabelled';
   const areaLabels = labels.filter((l) => !TYPE_LABELS.includes(l));
   const q = (v) => String(v ?? '').replace(/"/g, "'");
-
   const attrs = [
     `identifier="${q(issue.identifier)}"`,
     `title="${q(issue.title)}"`,
@@ -147,7 +169,6 @@ function buildPrompt(issue, branch) {
     issue.project?.name ? `project="${q(issue.project.name)}"` : null,
     issue.parent ? `parent="${q(issue.parent.identifier)} — ${q(issue.parent.title)}"` : null,
   ].filter(Boolean).join(' ');
-
   const byType = {
     Bug: [
       'Locate the root cause and cite it with a `file:line` anchor — a plan that fixes a symptom',
@@ -182,7 +203,6 @@ function buildPrompt(issue, branch) {
       'happy path.'
     );
   }
-
   return [
     '<role>',
     'You are the Planning Agent for peeepl-dev. You turn a Linear issue into a plan precise enough',
@@ -274,7 +294,6 @@ function buildPrompt(issue, branch) {
     '</output_format>',
   ].filter((l) => l !== null).join('\n');
 }
-
 function runClaude(prompt) {
   const raw = execFileSync(
     'claude',
@@ -283,20 +302,17 @@ function runClaude(prompt) {
       '--model', CLAUDE_MODEL,
       '--max-turns', MAX_TURNS,
       '--allowedTools', 'Read,Grep,Glob',
-      '--permission-mode', 'bypassPermissions',
+      '--permission-mode', 'dontAsk',
       '--output-format', 'json',
     ],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
   );
-
   const parsed = JSON.parse(raw);
   if (parsed.is_error) throw new Error(`Claude returned an error: ${parsed.result ?? '(no detail)'}`);
   if (!parsed.result || !parsed.result.trim()) throw new Error('Claude returned an empty result.');
   return parsed;
 }
-
 // ---------------------------------------------------------------------- main
-
 async function fetchTodoIssues() {
   const issues = [];
   let after = null;
@@ -307,10 +323,8 @@ async function fetchTodoIssues() {
   } while (after);
   return issues;
 }
-
 async function ensureBranch(issue, baseSha) {
   const branch = issue.branchName;
-
   const existing = await github(`/repos/${REPO}/git/ref/heads/${branch}`);
   if (existing.ok) {
     console.log(`  branch "${branch}" already exists.`);
@@ -319,12 +333,10 @@ async function ensureBranch(issue, baseSha) {
   if (existing.status !== 404) {
     throw new Error(`Unexpected HTTP ${existing.status} while checking branch "${branch}".`);
   }
-
   const created = await github(`/repos/${REPO}/git/refs`, {
     method: 'POST',
     body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
   });
-
   if (created.status === 422) {
     console.log(`  branch "${branch}" was created concurrently.`);
     return true;
@@ -332,7 +344,6 @@ async function ensureBranch(issue, baseSha) {
   if (!created.ok) {
     throw new Error(`Failed to create branch "${branch}" (HTTP ${created.status}): ${await created.text()}`);
   }
-
   console.log(`  created branch "${branch}".`);
   await comment(
     issue.id,
@@ -347,19 +358,14 @@ async function ensureBranch(issue, baseSha) {
   );
   return true;
 }
-
-async function analyseIssue(issue) {
+async function analyseIssue(issue, originalDescription) {
   const branch = issue.branchName;
-
   const sha = checkoutIssueBranch(branch);
   console.log(`  checked out "${branch}" at ${sha.substring(0, 7)}; invoking Claude...`);
-
   const parsed = runClaude(buildPrompt(issue, branch));
   const cost = parsed.total_cost_usd != null ? ` | cost: $${parsed.total_cost_usd}` : '';
   console.log(`  turns: ${parsed.num_turns ?? '?'}${cost}`);
-
-  const original = (issue.description || '').trimEnd();
-
+  const original = originalDescription.trimEnd();
   const section = [
     ANALYSIS_MARKER,
     '## 🔍 Plan refinement _(Planning Agent, automated)_',
@@ -369,18 +375,14 @@ async function analyseIssue(issue) {
     '',
     parsed.result.trim(),
   ].join('\n');
-
   // The human-written description is preserved verbatim above the separator.
   const description = original ? `${original}\n\n---\n\n${section}` : section;
-
   await setDescription(issue.id, description);
 }
-
 async function main() {
   const issues = await fetchTodoIssues();
   console.log(`Found ${issues.length} issue(s) in "${STATE_NAME}" for team ${TEAM_KEY}.\n`);
   if (issues.length === 0) return;
-
   const baseRes = await github(`/repos/${REPO}/git/ref/heads/${BASE_BRANCH}`);
   if (!baseRes.ok) {
     throw new Error(
@@ -388,37 +390,41 @@ async function main() {
     );
   }
   const baseSha = (await baseRes.json()).object.sha;
-
+  const labelIds = await loadLoopLabels();
   const failures = [];
-
   for (const issue of issues) {
     console.log(`${issue.identifier} — ${issue.title}`);
     try {
       // Phase 1 — branch must exist before anything is analysed.
       await ensureBranch(issue, baseSha);
-
       // Phase 2 — analyse, unless this issue already has an analysis.
+      const currentLabels = (issue.labels?.nodes ?? []);
+      const replan = currentLabels.some((l) => l.name === REPLAN_LABEL);
       const analysed = (issue.description || '').includes(ANALYSIS_MARKER);
-      if (analysed) {
+      if (analysed && !replan) {
         console.log('  description already contains an analysis - skipping.\n');
         continue;
       }
-
-      await analyseIssue(issue);
-      console.log('  analysis written to description.\n');
+      if (replan) console.log(`  label "${REPLAN_LABEL}" present - replacing the previous appendix.`);
+      await analyseIssue(issue, stripAppendix(issue.description));
+      // Labels: drop REPLAN, ensure PLANNED. Nothing else on the issue is touched.
+      if (replan && labelIds[REPLAN_LABEL]) await removeLabel(issue.id, labelIds[REPLAN_LABEL]);
+      const hasPlanned = currentLabels.some((l) => l.name === PLANNED_LABEL);
+      if (labelIds[PLANNED_LABEL] && !hasPlanned) await addLabel(issue.id, labelIds[PLANNED_LABEL]);
+      console.log(`  analysis written to description${labelIds[PLANNED_LABEL] ? `; label "${PLANNED_LABEL}" set` : ''}${replan ? `; label "${REPLAN_LABEL}" removed` : ''}.\n`);
     } catch (err) {
       const detail = err.stderr ? `${err.message}\n${String(err.stderr).trim()}` : err.message;
       console.error(`  FAILED: ${detail}\n`);
       failures.push(`${issue.identifier}: ${err.message}`);
     }
   }
-
   if (failures.length > 0) {
     throw new Error(`${failures.length} issue(s) failed:\n${failures.join('\n')}`);
   }
 }
-
-main().catch((err) => {
-  console.error(err.message);
-  process.exit(1);
-});
+if (process.argv[1] && process.argv[1].endsWith('planning-agent.mjs')) {
+  main().catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
+}
