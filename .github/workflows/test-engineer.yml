@@ -1,0 +1,75 @@
+name: Test Engineer
+
+# Runs each Release-Candidate issue's test plan against the staging environment
+# whenever staging is deployed (push to the staging branch) or on demand, and
+# posts the result on the issue. Fails the job when an issue's tests fail, so
+# GitHub notifies. Never changes issue status.
+#
+# Must exist on the staging branch (push-triggered workflows run the file of the
+# pushed commit): commit it to development, it reaches staging with the next
+# Release Candidate PR. On workflow_dispatch it runs from the default branch but
+# still checks out and tests the staging branch.
+#
+# Needs: LINEAR_API_KEY secret (part 1), repository variable STAGING_URL
+# (Settings → Secrets and variables → Actions → Variables), a Linear label
+# "tests-failed", and a Playwright config that reads process.env.BASE_URL
+# (or set BASE_URL_VAR below to the variable name your config reads).
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-engineer
+  cancel-in-progress: false
+
+jobs:
+  e2e-against-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: staging
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies and browsers (only when the repo has e2e tests)
+        run: |
+          if [ ! -d e2e ]; then echo "No e2e/ folder — skipping install."; exit 0; fi
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npx playwright install --with-deps chromium
+
+      - name: Run the test plans against staging and report to Linear
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          TEAM_KEY: SBX                    # Edit before committing: Linear team key
+          STATE_NAME: Release Candidate
+          E2E_DIR: e2e                     # folder of the Playwright specs
+          FAILED_LABEL: tests-failed
+          PLAYWRIGHT_CMD: npx playwright test
+          BASE_URL_VAR: BASE_URL           # env variable your playwright.config reads for baseURL
+        run: |
+          export STAGING_SHA="$(git rev-parse HEAD)"
+          echo "Testing staging at $STAGING_SHA against $STAGING_URL"
+          node .github/workflows/test-engineer.mjs
+
+      - name: Keep the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 14
