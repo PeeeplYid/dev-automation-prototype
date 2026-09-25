@@ -41,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TEAM_KEY: DEV            # Linear team key = prefix of the issue identifiers
+          TEAM_KEY: SBX            # Linear team key = prefix of the issue identifiers
           STATE_NAME: Todo         # workflow state to watch, spelled as in Linear
           BASE_BRANCH: development # branch new issue branches are cut from
           MAX_TURNS: '40'          # 20–50 depending on repo size; peeepl-web-v2: 40
