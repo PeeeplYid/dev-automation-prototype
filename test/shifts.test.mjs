@@ -17,3 +17,11 @@ test('shiftHours for a day shift', () => {
 test('shiftHours for a night shift across midnight', () => {
   assert.equal(shiftHours('22:00', '06:00'), 8);
 });
+
+test('weeklyHours sums two shifts 08:00-16:00 each to 16', () => {
+  assert.equal(weeklyHours([{ start: '08:00', end: '16:00' }, { start: '08:00', end: '16:00' }]), 16);
+});
+
+test('weeklyHours for an empty list returns 0', () => {
+  assert.equal(weeklyHours([]), 0);
+});
