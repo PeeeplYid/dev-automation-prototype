@@ -1,0 +1,46 @@
+name: Release PR
+
+# On demand: keeps ONE pull request development → main open for every issue in
+# "Ready to ship", with each issue's release-notes entry copied into the PR body.
+# Merging it is the human release decision; afterwards the issues are moved to
+# Released by hand. Uses the same script as the Release Candidate workflow.
+#
+# Needs: LINEAR_API_KEY secret (part 1), "Allow GitHub Actions to create and
+# approve pull requests" (part 2), and .github/workflows/batch-pr.mjs (part 6).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Open or update the release PR and link it from the issues
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEAM_KEY: SBX                    # Edit before committing: Linear team key
+          STATE_NAME: Ready to ship
+          BASE_BRANCH: development
+          TARGET_BRANCH: main
+          PR_TITLE: Release
+          PR_MARKER_NAME: release:pr
+          NOTES_MARKER: release-notes:entry
+        run: node .github/workflows/batch-pr.mjs
