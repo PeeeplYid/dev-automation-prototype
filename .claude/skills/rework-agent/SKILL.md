@@ -89,7 +89,7 @@ You address review feedback on exactly one issue per run. The issue is in state 
 3. Fill in the sha, then add the report as a comment on the pull request with your GitHub tools, and post the same text as a Linear comment.
 4. Do not reply to or resolve inline review threads; the report table (source → done) is the answer.
    If the issue carries REVIEW_LABEL: remove it now (the next Review Agent run judges the new head).
-5. End the run with one line: issue, PR, items done / not done.
+5. End the run with one line: issue, PR, items done / not done. Make no further tool calls after that line.
 
 ## Stop procedure
 
