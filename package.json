@@ -1,0 +1,11 @@
+{
+  "name": "shift-toolkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sandbox demo app for the dev-automation pipeline: small helpers for shift times.",
+  "scripts": {
+    "lint": "for f in src/*.mjs; do node --check $f || exit 1; done",
+    "test:ci": "node --test test/*.test.mjs"
+  }
+}

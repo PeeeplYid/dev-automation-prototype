@@ -1,0 +1,53 @@
+name: Agent dispatcher
+
+# Every 15 minutes: start the Claude Code routines that have work (Design, Coding,
+# Review, Rework, Release notes) via their API triggers. See agent-dispatch.mjs.
+
+on:
+  schedule:
+    - cron: '3,18,33,48 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only log what would be started'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: agent-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Start routines that have work
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TEAM_KEY: SBX                 # Edit before committing: Linear team key
+          BASE_BRANCH: development
+          MAX_FIRES: '3'
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          DESIGN_ROUTINE_URL: ${{ vars.DESIGN_ROUTINE_URL }}
+          DESIGN_ROUTINE_TOKEN: ${{ secrets.DESIGN_ROUTINE_TOKEN }}
+          CODING_ROUTINE_URL: ${{ vars.CODING_ROUTINE_URL }}
+          CODING_ROUTINE_TOKEN: ${{ secrets.CODING_ROUTINE_TOKEN }}
+          REVIEW_ROUTINE_URL: ${{ vars.REVIEW_ROUTINE_URL }}
+          REVIEW_ROUTINE_TOKEN: ${{ secrets.REVIEW_ROUTINE_TOKEN }}
+          REWORK_ROUTINE_URL: ${{ vars.REWORK_ROUTINE_URL }}
+          REWORK_ROUTINE_TOKEN: ${{ secrets.REWORK_ROUTINE_TOKEN }}
+          RELEASE_NOTES_ROUTINE_URL: ${{ vars.RELEASE_NOTES_ROUTINE_URL }}
+          RELEASE_NOTES_ROUTINE_TOKEN: ${{ secrets.RELEASE_NOTES_ROUTINE_TOKEN }}
+        run: node .github/workflows/agent-dispatch.mjs

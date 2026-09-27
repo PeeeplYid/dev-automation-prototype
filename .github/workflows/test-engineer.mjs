@@ -57,7 +57,7 @@ const ISSUES_QUERY = `
     issues(filter: { team: { key: { eq: $teamKey } }, state: { name: { eq: $stateName } } }, first: 100, after: $after) {
       nodes {
         id identifier title description
-        labels(first: 50) { nodes { id name } }
+        labels(first: 50) { nodes { id name parent { name } } }
         resultComments: comments(filter: { body: { contains: $marker } }, first: 1) { nodes { body } }
       }
       pageInfo { hasNextPage endCursor }
@@ -206,7 +206,11 @@ async function main() {
     await linear(COMMENT_MUTATION, { issueId: issue.id, body });
     const hasLabel = issue.labels.nodes.some((l) => l.id === failedLabelId);
     const wantLabel = verdict === 'FAILED' || verdict === 'NO TEST PLAN';
-    if (wantLabel && !hasLabel) await linear(ADD_LABEL_MUTATION, { id: issue.id, labelId: failedLabelId });
+    if (wantLabel && !hasLabel) {
+      // Pipeline labels are exclusive (Linear label group "Pipeline"): drop any other one first.
+      for (const l of issue.labels.nodes) if (l.parent?.name === 'Pipeline' && l.id !== failedLabelId) await linear(REMOVE_LABEL_MUTATION, { id: issue.id, labelId: l.id });
+      await linear(ADD_LABEL_MUTATION, { id: issue.id, labelId: failedLabelId });
+    }
     if (!wantLabel && hasLabel) await linear(REMOVE_LABEL_MUTATION, { id: issue.id, labelId: failedLabelId });
     console.log(`  ${issue.identifier}: ${verdict}`);
     if (wantLabel) problems.push(`${issue.identifier}: ${verdict}`);

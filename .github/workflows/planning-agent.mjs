@@ -43,10 +43,11 @@ const ANALYSIS_MARKER = '<!-- planning-agent:analysis -->';
 //                    changed; the agent replaces the appendix and removes the label.
 const PLANNED_LABEL = process.env.PLANNED_LABEL || 'planned';
 const REPLAN_LABEL = process.env.REPLAN_LABEL || 'replan';
+const PIPELINE_GROUP = process.env.PIPELINE_GROUP || 'Pipeline';
 const LINEAR_URL = 'https://api.linear.app/graphql';
 const GH_API = 'https://api.github.com';
 // --------------------------------------------------------------- API helpers
-async function linear(query, variables = {}) {
+async function linear(query, variables = {}, attempt = 1) {
   const res = await fetch(LINEAR_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: LINEAR_API_KEY },
@@ -57,7 +58,15 @@ async function linear(query, variables = {}) {
       `Linear rejected the API key (HTTP ${res.status}). Check LINEAR_API_KEY and its access to team ${TEAM_KEY}.`
     );
   }
-  const json = await res.json();
+  // Retries transient Linear outages (5xx / non-JSON bodies such as "upstream connect error").
+  const text = await res.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if ((!json || res.status >= 500) && attempt < 4) {
+    console.warn(`Linear HTTP ${res.status}, retry ${attempt}/3 in ${attempt * 5}s`);
+    await new Promise((r) => setTimeout(r, attempt * 5000));
+    return linear(query, variables, attempt + 1);
+  }
+  if (!json) throw new Error(`Linear API unavailable (HTTP ${res.status}): ${text.slice(0, 200)}`);
   if (json.errors) throw new Error(`Linear API error: ${JSON.stringify(json.errors)}`);
   return json.data;
 }
@@ -88,7 +97,7 @@ const ISSUES_QUERY = `
         title
         description
         branchName
-        labels(first: 20) { nodes { id name } }
+        labels(first: 20) { nodes { id name parent { name } } }
         project { name }
         parent { identifier title }
       }
@@ -418,7 +427,11 @@ async function main() {
       // Labels: drop REPLAN, ensure PLANNED. Nothing else on the issue is touched.
       if (replan && labelIds[REPLAN_LABEL]) await removeLabel(issue.id, labelIds[REPLAN_LABEL]);
       const hasPlanned = currentLabels.some((l) => l.name === PLANNED_LABEL);
-      if (labelIds[PLANNED_LABEL] && !hasPlanned) await addLabel(issue.id, labelIds[PLANNED_LABEL]);
+      if (labelIds[PLANNED_LABEL] && !hasPlanned) {
+        // Pipeline labels are exclusive (Linear label group "Pipeline"): drop any other one first.
+        for (const l of currentLabels) if (l.parent?.name === PIPELINE_GROUP && l.name !== PLANNED_LABEL && l.name !== REPLAN_LABEL) await removeLabel(issue.id, l.id);
+        await addLabel(issue.id, labelIds[PLANNED_LABEL]);
+      }
       console.log(`  analysis written to description${labelIds[PLANNED_LABEL] ? `; label "${PLANNED_LABEL}" set` : ''}${replan ? `; label "${REPLAN_LABEL}" removed` : ''}.\n`);
     } catch (err) {
       const detail = err.stderr ? `${err.message}\n${String(err.stderr).trim()}` : err.message;

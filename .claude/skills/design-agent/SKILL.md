@@ -1,7 +1,7 @@
 ---
 name: design-agent
 description: Produces a reviewable UI draft for one Linear issue that is "In Design" and links it to the issue. Use when asked to run the design agent.
-allowed-tools: mcp__linear__*
+allowed-tools: mcp__linear__*, Artifact
 ---
 
 # Design Agent
@@ -22,6 +22,8 @@ Edit these before committing the file.
 
 ## Hard rules
 
+- Your final one-line message ends the run: make no tool calls after it (no re-checks, no notifications).
+- Labels of the Linear label group `Pipeline` are exclusive (one per issue): when you add one, remove any other `Pipeline` label on the issue in the same update.
 - Linear is reached only through the `linear` MCP server from the repo's `.mcp.json`. If its tools are not available, end the run with: `Linear MCP server not available — check LINEAR_AGENT_KEY and network access to mcp.linear.app in the routine's environment.`
 - Never change an issue's status, assignee or priority. Labels: only BLOCKED_LABEL.
 - Never commit to the issue's own branch (Linear's `gitBranchName`). The fallback branch you may create is `design-<key>-<n>` (no slash) — it deliberately does not match the PR-opening workflow.
@@ -51,7 +53,7 @@ Edit these before committing the file.
 Try 3a first; use 3b only if the tools for 3a are not available in this session.
 
 **3a — Claude Design canvas (preferred)**
-1. Create a Design artifact (Claude Design canvas) with the Artifact tool, one artboard per screen from your list, using DESIGN_SYSTEM when it is not `none`. Title: `TEAM_KEY-<n> — <issue title>`.
+1. Create a Design artifact (Claude Design canvas) with the Artifact tool, one artboard per screen from your list, using DESIGN_SYSTEM when it is not `none`. Title: `TEAM_KEY-<n> — <issue title>`. Write the canvas files into this session's scratchpad directory (not `/tmp/design-agent`) — the Artifact tool only publishes files from the scratchpad or the working directory. Publish all files in one call.
 2. Add a last artboard `Notes` listing: which acceptance criterion each screen serves, assumptions you made, open questions for the reviewer.
 3. Record the artifact URL in `/tmp/design-agent/link.txt`.
 
