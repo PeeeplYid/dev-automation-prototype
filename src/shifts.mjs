@@ -21,6 +21,11 @@ export function shiftHours(start, end) {
 
 // Net shift length in hours after removing an unpaid break; a break longer
 // than the shift is invalid.
+/**
+ * @param {string} start - shift start time as "HH:MM"
+ * @param {string} end - shift end time as "HH:MM"; before `start` means the shift ends the next day
+ * @param {number} [breakMinutes=0] - unpaid break length in minutes; must not exceed the shift length
+ */
 export function netHours(start, end, breakMinutes = 0) {
   const minutes = shiftMinutes(start, end);
   if (breakMinutes > minutes) {
