@@ -1,6 +1,6 @@
 // Shift helpers. Times are "HH:MM" strings (24 h). A shift may cross midnight.
 
-const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/; 
+const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export function toMinutes(time) {
   const m = TIME.exec(time);
