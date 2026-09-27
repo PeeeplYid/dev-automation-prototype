@@ -8,9 +8,23 @@ export function toMinutes(time) {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
-// Length of a shift in hours; an end before the start means the shift ends the next day.
-export function shiftHours(start, end) {
+function shiftMinutes(start, end) {
   let minutes = toMinutes(end) - toMinutes(start);
   if (minutes <= 0) minutes += 24 * 60;
-  return minutes / 60;
+  return minutes;
+}
+
+// Length of a shift in hours; an end before the start means the shift ends the next day.
+export function shiftHours(start, end) {
+  return shiftMinutes(start, end) / 60;
+}
+
+// Net shift length in hours after removing an unpaid break; a break longer
+// than the shift is invalid.
+export function netHours(start, end, breakMinutes = 0) {
+  const minutes = shiftMinutes(start, end);
+  if (breakMinutes > minutes) {
+    throw new RangeError(`Break of ${breakMinutes} minutes exceeds shift length of ${minutes} minutes`);
+  }
+  return (minutes - breakMinutes) / 60;
 }
